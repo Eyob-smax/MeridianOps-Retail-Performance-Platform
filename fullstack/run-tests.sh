@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT_DIR"
+
+docker compose -f docker-compose.yml --profile test run --rm backend-tests
+
+docker compose -f docker-compose.yml --profile test run --rm frontend-tests
+
+echo "All dockerized tests passed."

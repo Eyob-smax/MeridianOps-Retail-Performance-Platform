@@ -1,0 +1,148 @@
+{
+  "format": "openai/trajectory/v1",
+  "project": "MeridianOps Retail Performance Platform",
+  "created_at": "2026-03-26T15:15:00+03:00",
+  "sessions": [
+    {
+      "id": "prompt-1",
+      "title": "Project bootstrap and baseline architecture",
+      "started_at": "2026-03-26T14:52:00+03:00",
+      "ended_at": "2026-03-26T15:15:00+03:00",
+      "status": "completed",
+      "milestones": [
+        {
+          "time": "2026-03-26T14:55:00+03:00",
+          "event": "Created mandatory package structure: fullstack/, docs/, prompt.md"
+        },
+        {
+          "time": "2026-03-26T15:02:00+03:00",
+          "event": "Initialized FastAPI backend modular structure, health endpoints, and config/security scaffolding"
+        },
+        {
+          "time": "2026-03-26T15:07:00+03:00",
+          "event": "Added SQLAlchemy + Alembic migration baseline and database connection probe"
+        },
+        {
+          "time": "2026-03-26T15:11:00+03:00",
+          "event": "Initialized Vue SPA with role-based shell, route map placeholders, and health view wired to backend"
+        },
+        {
+          "time": "2026-03-26T15:14:00+03:00",
+          "event": "Added lint/format/test frameworks and authored initial design + API specification docs"
+        }
+      ],
+      "artifacts": [
+        "fullstack/backend",
+        "fullstack/frontend",
+        "docs/design.md",
+        "docs/api-spec.md",
+        "questions.md"
+      ]
+    },
+    {
+      "id": "prompt-2-4",
+      "title": "Authentication, loyalty, and campaign lifecycle increments",
+      "started_at": "2026-03-26T15:20:00+03:00",
+      "ended_at": "2026-03-26T18:20:00+03:00",
+      "status": "completed_with_constraints",
+      "milestones": [
+        {
+          "time": "2026-03-26T15:42:00+03:00",
+          "event": "Implemented auth endpoints (login/logout/session), lockout tracking, session cookies, and role dependencies"
+        },
+        {
+          "time": "2026-03-26T15:58:00+03:00",
+          "event": "Added frontend login/session workflow with guarded routes and role-scoped navigation"
+        },
+        {
+          "time": "2026-03-26T16:25:00+03:00",
+          "event": "Implemented members/loyalty domain: tiers, points accrual, points ledger, wallet account + wallet ledger, and audit events"
+        },
+        {
+          "time": "2026-03-26T17:05:00+03:00",
+          "event": "Implemented campaign lifecycle: CRUD, coupon issuance (assignment/QR payload), redemption validation with reason codes and event traceability"
+        },
+        {
+          "time": "2026-03-26T17:42:00+03:00",
+          "event": "Added cashier-facing member lookup and checkout redemption UI plus campaign management screens"
+        },
+        {
+          "time": "2026-03-26T18:10:00+03:00",
+          "event": "Expanded backend tests for lockout, RBAC, points determinism, wallet safety, and campaign redemption rules"
+        }
+      ],
+      "constraints": [
+        "Dependency installation was interrupted by user action; full pytest/vite test execution could not complete in this environment",
+        "Python source compile check completed successfully"
+      ],
+      "artifacts": [
+        "fullstack/backend/app/api/v1/endpoints/auth.py",
+        "fullstack/backend/app/api/v1/endpoints/members.py",
+        "fullstack/backend/app/api/v1/endpoints/campaigns.py",
+        "fullstack/backend/app/services/loyalty_service.py",
+        "fullstack/backend/app/services/campaign_service.py",
+        "fullstack/backend/tests/test_auth_security.py",
+        "fullstack/frontend/src/views/app/MembersView.vue",
+        "fullstack/frontend/src/views/app/CampaignsView.vue",
+        "fullstack/frontend/src/views/app/CheckoutView.vue",
+        "docs/design.md",
+        "docs/api-spec.md",
+        "questions.md"
+      ]
+    },
+    {
+      "id": "prompt-5-8-partial",
+      "title": "Inventory, training, attendance, analytics UI and docker hardening",
+      "started_at": "2026-03-27T09:15:00+03:00",
+      "ended_at": "2026-03-27T11:10:00+03:00",
+      "status": "completed_with_constraints",
+      "milestones": [
+        {
+          "time": "2026-03-27T09:40:00+03:00",
+          "event": "Implemented inventory API endpoints/services and replaced inventory placeholder UIs with real endpoint integration"
+        },
+        {
+          "time": "2026-03-27T10:15:00+03:00",
+          "event": "Implemented training APIs/services and connected training management/review frontend pages"
+        },
+        {
+          "time": "2026-03-27T10:45:00+03:00",
+          "event": "Added attendance anti-fraud backend (device binding + rotating QR) with check-in/out, make-up approval, and payroll export"
+        },
+        {
+          "time": "2026-03-27T11:00:00+03:00",
+          "event": "Replaced analytics/admin/campaign placeholder pages with real API-connected views and expanded frontend service-level tests"
+        },
+        {
+          "time": "2026-03-27T11:08:00+03:00",
+          "event": "Validated docker compose runtime/test profiles and updated runbook/API docs"
+        }
+      ],
+      "constraints": [
+        "End-to-end docker build/test execution was not fully executed in this session due command run skips",
+        "Editor diagnostics show unresolved framework imports when Python environment is not fully indexed"
+      ],
+      "artifacts": [
+        "fullstack/backend/app/api/v1/endpoints/inventory.py",
+        "fullstack/backend/app/api/v1/endpoints/training.py",
+        "fullstack/backend/app/api/v1/endpoints/attendance.py",
+        "fullstack/backend/app/services/inventory_service.py",
+        "fullstack/backend/app/services/training_service.py",
+        "fullstack/backend/app/services/attendance_service.py",
+        "fullstack/backend/tests/test_inventory_workflow.py",
+        "fullstack/backend/tests/test_training_flow.py",
+        "fullstack/backend/tests/test_attendance_flow.py",
+        "fullstack/frontend/src/views/app/TrainingView.vue",
+        "fullstack/frontend/src/views/app/TrainingReviewView.vue",
+        "fullstack/frontend/src/views/app/AttendanceView.vue",
+        "fullstack/frontend/src/views/app/AttendanceRequestsView.vue",
+        "fullstack/frontend/src/views/app/AnalyticsView.vue",
+        "fullstack/frontend/src/views/app/AnalyticsBuilderView.vue",
+        "fullstack/frontend/src/views/app/AdminSecurityView.vue",
+        "fullstack/README.md",
+        "docs/api-spec.md",
+        "docs/design.md"
+      ]
+    }
+  ]
+}

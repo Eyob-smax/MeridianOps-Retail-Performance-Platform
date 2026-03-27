@@ -1,0 +1,107 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: meridianops-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: meridianops
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meridianops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: meridianops-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: "docker"
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/meridianops"
+      BACKEND_CORS_ORIGINS: "http://localhost:5173"
+      SCHEDULER_ENABLED: "false"
+      SCHEDULER_START_ON_BOOT: "false"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=5); sys.exit(0)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: meridianops-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      VITE_API_BASE_URL: "http://localhost:8000/api/v1"
+      VITE_APP_NAME: "MeridianOps Retail Performance"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:5173', (r) => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    ports:
+      - "5173:5173"
+
+  backend-tests:
+    profiles: ["test"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: test
+    container_name: meridianops-backend-tests
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      APP_ENV: "test"
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
+      SCHEDULER_ENABLED: "false"
+      SCHEDULER_START_ON_BOOT: "false"
+
+  frontend-tests:
+    profiles: ["test"]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: test
+    container_name: meridianops-frontend-tests
+    depends_on:
+      frontend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
