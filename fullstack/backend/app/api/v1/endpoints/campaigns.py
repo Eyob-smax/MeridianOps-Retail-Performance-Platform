@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps.auth import require_roles
-from app.core.errors import bad_request
+from app.core.errors import bad_request, not_found
 from app.db.session import get_db
 from app.schemas.auth import AuthUser
 from app.schemas.campaigns import (
@@ -14,7 +14,10 @@ from app.schemas.campaigns import (
     CouponRedeemRequest,
     CouponRedeemResponse,
 )
+from app.types.business import IssuanceMethod
 from app.services.campaign_service import (
+    CampaignMemberNotFoundError,
+    CampaignNotFoundError,
     create_campaign,
     get_campaign,
     issue_coupon,
@@ -29,6 +32,7 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 def _to_campaign_response(campaign) -> CampaignResponse:
     return CampaignResponse(
         id=campaign.id,
+        store_id=campaign.store_id,
         name=campaign.name,
         campaign_type=campaign.campaign_type,
         effective_start=campaign.effective_start,
@@ -44,10 +48,10 @@ def _to_campaign_response(campaign) -> CampaignResponse:
 
 @router.get("", response_model=list[CampaignResponse])
 def campaign_list(
-    _: AuthUser = Depends(require_roles({"administrator", "store_manager"})),
+    current_user: AuthUser = Depends(require_roles({"administrator", "store_manager"})),
     db: Session = Depends(get_db),
 ) -> list[CampaignResponse]:
-    campaigns = list_campaigns(db)
+    campaigns = list_campaigns(db, store_id=current_user.store_id)
     return [_to_campaign_response(campaign) for campaign in campaigns]
 
 
@@ -58,7 +62,7 @@ def campaign_create(
     db: Session = Depends(get_db),
 ) -> CampaignResponse:
     try:
-        campaign = create_campaign(db, payload, current_user.id)
+        campaign = create_campaign(db, payload, current_user)
         db.commit()
         return _to_campaign_response(campaign)
     except ValueError as exc:
@@ -69,12 +73,12 @@ def campaign_create(
 @router.get("/{campaign_id}", response_model=CampaignResponse)
 def campaign_detail(
     campaign_id: int,
-    _: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
+    current_user: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
     db: Session = Depends(get_db),
 ) -> CampaignResponse:
-    campaign = get_campaign(db, campaign_id)
+    campaign = get_campaign(db, campaign_id, store_id=current_user.store_id)
     if not campaign:
-        raise bad_request("Campaign not found")
+        raise not_found("Campaign not found")
     return _to_campaign_response(campaign)
 
 
@@ -85,9 +89,9 @@ def campaign_patch(
     current_user: AuthUser = Depends(require_roles({"administrator", "store_manager"})),
     db: Session = Depends(get_db),
 ) -> CampaignResponse:
-    campaign = get_campaign(db, campaign_id)
+    campaign = get_campaign(db, campaign_id, store_id=current_user.store_id)
     if not campaign:
-        raise bad_request("Campaign not found")
+        raise not_found("Campaign not found")
     try:
         updated = update_campaign(db, campaign, payload, current_user.id)
         db.commit()
@@ -104,14 +108,17 @@ def campaign_issue_coupon(
     db: Session = Depends(get_db),
 ) -> CouponIssueResponse:
     try:
-        coupon, qr_payload = issue_coupon(db, payload, current_user.id)
+        coupon, qr_payload = issue_coupon(db, payload, current_user)
         db.commit()
         return CouponIssueResponse(
             coupon_code=coupon.coupon_code,
             campaign_id=coupon.campaign_id,
-            issuance_method=coupon.issuance_method,
+            issuance_method=IssuanceMethod(coupon.issuance_method),
             qr_payload=qr_payload,
         )
+    except (CampaignNotFoundError, CampaignMemberNotFoundError) as exc:
+        db.rollback()
+        raise not_found(str(exc))
     except ValueError as exc:
         db.rollback()
         raise bad_request(str(exc))
@@ -123,6 +130,6 @@ def campaign_redeem_coupon(
     current_user: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
     db: Session = Depends(get_db),
 ) -> CouponRedeemResponse:
-    response = redeem_coupon(db, payload, current_user.id)
+    response = redeem_coupon(db, payload, current_user.id, operator_store_id=current_user.store_id)
     db.commit()
     return response

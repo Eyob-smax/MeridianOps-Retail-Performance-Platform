@@ -155,11 +155,11 @@ def inventory_release_reservation(
 def inventory_positions(
     sku: str | None = Query(default=None),
     location_code: str | None = Query(default=None),
-    _: AuthUser = Depends(require_roles(_INVENTORY_ROLES | {"cashier"})),
+    current_user: AuthUser = Depends(require_roles(_INVENTORY_ROLES | {"cashier"})),
     db: Session = Depends(get_db),
 ) -> list[InventoryPositionResponse]:
     try:
-        return list_positions(db, sku, location_code)
+        return list_positions(db, sku, location_code, store_id=current_user.store_id)
     except InventoryError as exc:
         raise bad_request(str(exc))
 
@@ -168,11 +168,11 @@ def inventory_positions(
 def inventory_position(
     sku: str,
     location_code: str,
-    _: AuthUser = Depends(require_roles(_INVENTORY_ROLES | {"cashier"})),
+    current_user: AuthUser = Depends(require_roles(_INVENTORY_ROLES | {"cashier"})),
     db: Session = Depends(get_db),
 ) -> InventoryPositionResponse:
     try:
-        return get_position(db, sku, location_code)
+        return get_position(db, sku, location_code, store_id=current_user.store_id)
     except InventoryError as exc:
         raise bad_request(str(exc))
 
@@ -180,7 +180,7 @@ def inventory_position(
 @router.get("/ledger", response_model=list[InventoryLedgerEntryResponse])
 def inventory_ledger(
     limit: int = Query(default=200, ge=1, le=1000),
-    _: AuthUser = Depends(require_roles(_INVENTORY_ROLES | {"cashier"})),
+    current_user: AuthUser = Depends(require_roles(_INVENTORY_ROLES | {"cashier"})),
     db: Session = Depends(get_db),
 ) -> list[InventoryLedgerEntryResponse]:
-    return list_ledger_entries(db, limit=limit)
+    return list_ledger_entries(db, limit=limit, store_id=current_user.store_id)

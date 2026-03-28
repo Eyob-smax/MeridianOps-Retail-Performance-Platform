@@ -12,6 +12,7 @@ from app.db.models import (
     AttendanceRuleConfig,
     AttendanceShift,
     DeviceBinding,
+    NfcBadge,
     RotatingQRToken,
 )
 from app.schemas.attendance import (
@@ -28,10 +29,12 @@ from app.schemas.attendance import (
     RotatingQRTokenResponse,
 )
 from app.schemas.auth import AuthUser
+from app.core.masking import mask_record
 from app.services.audit_service import audit_event
 
 
 logger = logging.getLogger("meridianops.attendance")
+_SENSITIVE_LOG_KEYS = {"device_id", "qr_token", "nfc_tag"}
 
 
 class AttendanceError(ValueError):
@@ -56,6 +59,7 @@ def get_or_create_rules(db: Session) -> AttendanceRuleConfig:
         tolerance_minutes=5,
         auto_break_after_hours=6,
         auto_break_minutes=30,
+        cross_day_shift_cutoff_hour=6,
         late_early_penalty_hours=Decimal("0.25"),
         updated_by_user_id=None,
     )
@@ -70,6 +74,7 @@ def get_rules(db: Session) -> AttendanceRuleResponse:
         tolerance_minutes=rules.tolerance_minutes,
         auto_break_after_hours=rules.auto_break_after_hours,
         auto_break_minutes=rules.auto_break_minutes,
+        cross_day_shift_cutoff_hour=rules.cross_day_shift_cutoff_hour,
         late_early_penalty_hours=str(rules.late_early_penalty_hours),
     )
 
@@ -79,6 +84,7 @@ def update_rules(db: Session, payload: AttendanceRuleUpdateRequest, current_user
     rules.tolerance_minutes = payload.tolerance_minutes
     rules.auto_break_after_hours = payload.auto_break_after_hours
     rules.auto_break_minutes = payload.auto_break_minutes
+    rules.cross_day_shift_cutoff_hour = payload.cross_day_shift_cutoff_hour
     rules.late_early_penalty_hours = payload.late_early_penalty_hours
     rules.updated_by_user_id = current_user.id
 
@@ -92,6 +98,7 @@ def update_rules(db: Session, payload: AttendanceRuleUpdateRequest, current_user
             "tolerance_minutes": rules.tolerance_minutes,
             "auto_break_after_hours": rules.auto_break_after_hours,
             "auto_break_minutes": rules.auto_break_minutes,
+            "cross_day_shift_cutoff_hour": rules.cross_day_shift_cutoff_hour,
             "late_early_penalty_hours": str(rules.late_early_penalty_hours),
         },
     )
@@ -109,12 +116,38 @@ def rotate_qr_token(db: Session, current_user: AuthUser) -> RotatingQRTokenRespo
 
 
 def _validate_qr_token(db: Session, token: str) -> RotatingQRToken:
-    row = db.execute(select(RotatingQRToken).where(RotatingQRToken.token == token)).scalar_one_or_none()
+    row = db.execute(
+        select(RotatingQRToken).where(RotatingQRToken.token == token).with_for_update()
+    ).scalar_one_or_none()
     if not row:
         raise AttendanceError("Invalid QR token")
     if _to_utc(row.expires_at) < _utcnow():
         raise AttendanceError("QR token expired")
+    if row.used_at is not None:
+        raise AttendanceError("QR token already used")
     return row
+
+
+def _consume_qr_token(row: RotatingQRToken | None) -> None:
+    if row is not None:
+        row.used_at = _utcnow()
+
+
+def _resolve_nfc_binding(db: Session, user_id: int, tag_id: str) -> NfcBadge:
+    binding = db.execute(select(NfcBadge).where(NfcBadge.user_id == user_id)).scalar_one_or_none()
+    if not binding:
+        binding = NfcBadge(user_id=user_id, tag_id=tag_id, active=True)
+        db.add(binding)
+        db.flush()
+        return binding
+
+    if not binding.active:
+        raise AttendanceError("NFC badge is disabled for this user")
+
+    if binding.tag_id != tag_id:
+        raise AttendanceError("NFC badge mismatch")
+
+    return binding
 
 
 def _resolve_binding(db: Session, user_id: int, device_id: str) -> DeviceBinding:
@@ -135,7 +168,8 @@ def _resolve_binding(db: Session, user_id: int, device_id: str) -> DeviceBinding
 
 
 def check_in(db: Session, payload: CheckInRequest, current_user: AuthUser) -> AttendanceShiftResponse:
-    token = _validate_qr_token(db, payload.qr_token)
+    token = _validate_qr_token(db, payload.qr_token) if payload.qr_token else None
+    nfc_binding = _resolve_nfc_binding(db, current_user.id, payload.nfc_tag) if payload.nfc_tag else None
     binding = _resolve_binding(db, current_user.id, payload.device_id)
 
     open_shift = db.execute(
@@ -148,9 +182,11 @@ def check_in(db: Session, payload: CheckInRequest, current_user: AuthUser) -> At
 
     check_in_at = _to_utc(payload.check_in_at) if payload.check_in_at else _utcnow()
     shift = AttendanceShift(
+        store_id=current_user.store_id,
         user_id=current_user.id,
         device_binding_id=binding.id,
-        qr_token_id=token.id,
+        qr_token_id=token.id if token else None,
+        nfc_badge_id=nfc_binding.id if nfc_binding else None,
         check_in_at=check_in_at,
         check_out_at=None,
         check_in_latitude=payload.latitude,
@@ -161,6 +197,7 @@ def check_in(db: Session, payload: CheckInRequest, current_user: AuthUser) -> At
     )
     db.add(shift)
     db.flush()
+    _consume_qr_token(token)
 
     audit_event(
         db,
@@ -168,16 +205,23 @@ def check_in(db: Session, payload: CheckInRequest, current_user: AuthUser) -> At
         resource_type="attendance_shift",
         resource_id=str(shift.id),
         actor_user_id=current_user.id,
-        detail={"device_id": payload.device_id, "qr_token": token.token},
+        detail={
+            "device_id": payload.device_id,
+            "qr_token": token.token if token else None,
+            "nfc_tag": payload.nfc_tag,
+        },
     )
 
     logger.info(
         "attendance_check_in",
-        extra={
-            "shift_id": shift.id,
-            "user_id": current_user.id,
-            "device_id": payload.device_id,
-        },
+        extra=mask_record(
+            {
+                "shift_id": shift.id,
+                "user_id": current_user.id,
+                "device_id": payload.device_id,
+            },
+            _SENSITIVE_LOG_KEYS,
+        ),
     )
 
     return AttendanceShiftResponse(
@@ -189,6 +233,15 @@ def check_in(db: Session, payload: CheckInRequest, current_user: AuthUser) -> At
         scheduled_start_at=shift.scheduled_start_at,
         scheduled_end_at=shift.scheduled_end_at,
     )
+
+
+def _resolve_business_date(shift: AttendanceShift, rules: AttendanceRuleConfig, check_out_at: datetime) -> date:
+    check_in_utc = _to_utc(shift.check_in_at)
+    if shift.scheduled_start_at is not None:
+        return _to_utc(shift.scheduled_start_at).date()
+    if check_out_at.date() > check_in_utc.date() and check_out_at.hour < rules.cross_day_shift_cutoff_hour:
+        return check_in_utc.date()
+    return check_out_at.date()
 
 
 def _compute_daily(shift: AttendanceShift, rules: AttendanceRuleConfig, check_out_at: datetime) -> AttendanceDailyResult:
@@ -212,11 +265,12 @@ def _compute_daily(shift: AttendanceShift, rules: AttendanceRuleConfig, check_ou
         early_incidents = 1
 
     penalty_hours = Decimal(late_incidents + early_incidents) * Decimal(rules.late_early_penalty_hours)
+    business_date = _resolve_business_date(shift, rules, check_out_at)
 
     return AttendanceDailyResult(
         user_id=shift.user_id,
         shift_id=shift.id,
-        business_date=_to_utc(shift.check_in_at).date(),
+        business_date=business_date,
         worked_hours=worked_hours.quantize(Decimal("0.01")),
         auto_break_minutes=auto_break_minutes,
         late_incidents=late_incidents,
@@ -226,7 +280,8 @@ def _compute_daily(shift: AttendanceShift, rules: AttendanceRuleConfig, check_ou
 
 
 def check_out(db: Session, payload: CheckOutRequest, current_user: AuthUser) -> CheckOutResponse:
-    token = _validate_qr_token(db, payload.qr_token)
+    token = _validate_qr_token(db, payload.qr_token) if payload.qr_token else None
+    nfc_binding = _resolve_nfc_binding(db, current_user.id, payload.nfc_tag) if payload.nfc_tag else None
     _resolve_binding(db, current_user.id, payload.device_id)
 
     shift = db.execute(
@@ -242,6 +297,7 @@ def check_out(db: Session, payload: CheckOutRequest, current_user: AuthUser) -> 
     shift.check_out_latitude = payload.latitude
     shift.check_out_longitude = payload.longitude
     shift.status = "closed"
+    _consume_qr_token(token)
 
     rules = get_or_create_rules(db)
 
@@ -258,6 +314,7 @@ def check_out(db: Session, payload: CheckOutRequest, current_user: AuthUser) -> 
         db.flush()
 
     daily = _compute_daily(shift, rules, check_out_at)
+    daily.store_id = current_user.store_id
     db.add(daily)
     db.flush()
 
@@ -267,17 +324,25 @@ def check_out(db: Session, payload: CheckOutRequest, current_user: AuthUser) -> 
         resource_type="attendance_shift",
         resource_id=str(shift.id),
         actor_user_id=current_user.id,
-        detail={"device_id": payload.device_id, "qr_token": token.token, "worked_hours": str(daily.worked_hours)},
+        detail={
+            "device_id": payload.device_id,
+            "qr_token": token.token if token else None,
+            "nfc_tag": payload.nfc_tag,
+            "worked_hours": str(daily.worked_hours),
+        },
     )
 
     logger.info(
         "attendance_check_out",
-        extra={
-            "shift_id": shift.id,
-            "user_id": current_user.id,
-            "device_id": payload.device_id,
-            "worked_hours": str(daily.worked_hours),
-        },
+        extra=mask_record(
+            {
+                "shift_id": shift.id,
+                "user_id": current_user.id,
+                "device_id": payload.device_id,
+                "worked_hours": str(daily.worked_hours),
+            },
+            _SENSITIVE_LOG_KEYS,
+        ),
     )
 
     shift_response = AttendanceShiftResponse(
@@ -308,6 +373,11 @@ def list_shifts_for_user(db: Session, current_user: AuthUser, limit: int = 30) -
     rows = db.execute(
         select(AttendanceShift)
         .where(AttendanceShift.user_id == current_user.id)
+        .where(
+            AttendanceShift.store_id == current_user.store_id
+            if current_user.store_id is not None
+            else True
+        )
         .order_by(AttendanceShift.check_in_at.desc())
         .limit(limit)
     ).scalars().all()
@@ -327,6 +397,7 @@ def list_shifts_for_user(db: Session, current_user: AuthUser, limit: int = 30) -
 
 def create_makeup_request(db: Session, payload: MakeupRequestCreate, current_user: AuthUser) -> MakeupRequestResponse:
     row = AttendanceMakeupRequest(
+        store_id=current_user.store_id,
         user_id=current_user.id,
         business_date=payload.business_date,
         reason=payload.reason.strip(),
@@ -354,6 +425,8 @@ def list_makeup_requests(db: Session, current_user: AuthUser) -> list[MakeupRequ
     stmt = select(AttendanceMakeupRequest)
     if "administrator" not in current_user.roles and "store_manager" not in current_user.roles:
         stmt = stmt.where(AttendanceMakeupRequest.user_id == current_user.id)
+    if current_user.store_id is not None:
+        stmt = stmt.where(AttendanceMakeupRequest.store_id == current_user.store_id)
 
     rows = db.execute(stmt.order_by(AttendanceMakeupRequest.created_at.desc())).scalars().all()
     return [
@@ -375,6 +448,8 @@ def list_makeup_requests(db: Session, current_user: AuthUser) -> list[MakeupRequ
 def approve_makeup_request(db: Session, request_id: int, payload: MakeupRequestApprove, current_user: AuthUser) -> MakeupRequestResponse:
     row = db.execute(select(AttendanceMakeupRequest).where(AttendanceMakeupRequest.id == request_id)).scalar_one_or_none()
     if not row:
+        raise AttendanceError("Make-up request not found")
+    if current_user.store_id is not None and row.store_id != current_user.store_id:
         raise AttendanceError("Make-up request not found")
     row.status = "approved"
     row.manager_note = payload.manager_note.strip()
@@ -413,17 +488,16 @@ def approve_makeup_request(db: Session, request_id: int, payload: MakeupRequestA
     )
 
 
-def payroll_export_rows(db: Session, start_date: date, end_date: date) -> list[AttendanceDailyResult]:
+def payroll_export_rows(db: Session, start_date: date, end_date: date, store_id: int | None = None) -> list[AttendanceDailyResult]:
     if end_date < start_date:
         raise AttendanceError("end_date must be on or after start_date")
-    rows = db.execute(
-        select(AttendanceDailyResult)
-        .where(
-            and_(
-                AttendanceDailyResult.business_date >= start_date,
-                AttendanceDailyResult.business_date <= end_date,
-            )
+    stmt = select(AttendanceDailyResult).where(
+        and_(
+            AttendanceDailyResult.business_date >= start_date,
+            AttendanceDailyResult.business_date <= end_date,
         )
-        .order_by(AttendanceDailyResult.business_date.asc(), AttendanceDailyResult.user_id.asc())
-    ).scalars().all()
-    return rows
+    )
+    if store_id is not None:
+        stmt = stmt.where(AttendanceDailyResult.store_id == store_id)
+    rows = db.execute(stmt.order_by(AttendanceDailyResult.business_date.asc(), AttendanceDailyResult.user_id.asc())).scalars().all()
+    return list(rows)

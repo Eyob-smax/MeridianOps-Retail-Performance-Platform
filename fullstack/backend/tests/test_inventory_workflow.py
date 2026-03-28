@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from app.services.auth_service import create_user
+
 
 def _login(client, username: str, password: str = "ChangeMeNow123"):
     client.post("/api/v1/auth/logout")
@@ -103,3 +105,51 @@ def test_inventory_receiving_transfer_reservation_and_count(client) -> None:
     ledger = client.get("/api/v1/inventory/ledger", params={"limit": 20})
     assert ledger.status_code == 200
     assert len(ledger.json()) >= 6
+
+
+def test_inventory_store_isolation(client, db_session) -> None:
+    create_user(
+        db=db_session,
+        username="manager102",
+        password="ChangeMeNow123",
+        display_name="Store Manager 102",
+        roles=["store_manager"],
+        store_id=102,
+    )
+    db_session.commit()
+
+    _login(client, "manager")
+
+    item = client.post(
+        "/api/v1/inventory/items",
+        json={
+            "sku": "SKU-ISO-1",
+            "name": "Isolation Item",
+            "unit": "ea",
+            "batch_tracking_enabled": False,
+            "expiry_tracking_enabled": False,
+        },
+    )
+    assert item.status_code == 200
+
+    loc_main = client.post("/api/v1/inventory/locations", json={"code": "S101-A", "name": "Store 101"})
+    assert loc_main.status_code == 200
+
+    receiving = client.post(
+        "/api/v1/inventory/receiving",
+        json={
+            "location_code": "S101-A",
+            "lines": [{"sku": "SKU-ISO-1", "quantity": "5.000"}],
+        },
+    )
+    assert receiving.status_code == 200
+
+    _login(client, "manager102")
+
+    position = client.get("/api/v1/inventory/positions/SKU-ISO-1/S101-A")
+    assert position.status_code == 400
+    assert "location" in position.json()["detail"].lower()
+
+    ledger = client.get("/api/v1/inventory/ledger", params={"limit": 20})
+    assert ledger.status_code == 200
+    assert ledger.json() == []

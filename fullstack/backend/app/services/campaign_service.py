@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Campaign, Coupon, CouponIssuanceEvent, CouponRedemptionEvent, Member
+from app.schemas.auth import AuthUser
 from app.schemas.campaigns import (
     CampaignCreateRequest,
     CampaignUpdateRequest,
@@ -15,11 +16,21 @@ from app.schemas.campaigns import (
     CouponRedeemRequest,
     CouponRedeemResponse,
 )
+from app.core.masking import mask_record
 from app.services.audit_service import audit_event
 from app.types.business import CampaignType, IssuanceMethod, RedemptionStatus, round_money
 
 
 logger = logging.getLogger("meridianops.campaigns")
+_SENSITIVE_LOG_KEYS = {"order_reference"}
+
+
+class CampaignNotFoundError(ValueError):
+    pass
+
+
+class CampaignMemberNotFoundError(ValueError):
+    pass
 
 
 def _generate_coupon_code() -> str:
@@ -34,11 +45,14 @@ def _normalize_member_code(member_code: str | None) -> str | None:
     return value or None
 
 
-def _get_member_by_code(db: Session, member_code: str | None) -> Member | None:
+def _get_member_by_code(db: Session, member_code: str | None, store_id: int | None = None) -> Member | None:
     normalized = _normalize_member_code(member_code)
     if not normalized:
         return None
-    return db.execute(select(Member).where(Member.member_code == normalized)).scalar_one_or_none()
+    stmt = select(Member).where(Member.member_code == normalized)
+    if store_id is not None:
+        stmt = stmt.where(Member.store_id == store_id)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def _validate_campaign_payload(payload: CampaignCreateRequest) -> None:
@@ -56,10 +70,11 @@ def _validate_campaign_payload(payload: CampaignCreateRequest) -> None:
             raise ValueError("fixed_amount_off and threshold_amount are required for full_reduction campaign")
 
 
-def create_campaign(db: Session, payload: CampaignCreateRequest, actor_user_id: int | None) -> Campaign:
+def create_campaign(db: Session, payload: CampaignCreateRequest, actor_user: AuthUser) -> Campaign:
     _validate_campaign_payload(payload)
 
     campaign = Campaign(
+        store_id=actor_user.store_id,
         name=payload.name.strip(),
         campaign_type=payload.campaign_type.value,
         percent_off=payload.percent_off,
@@ -69,7 +84,7 @@ def create_campaign(db: Session, payload: CampaignCreateRequest, actor_user_id: 
         effective_end=payload.effective_end,
         daily_redemption_cap=payload.daily_redemption_cap,
         per_member_daily_limit=payload.per_member_daily_limit,
-        created_by_user_id=actor_user_id,
+        created_by_user_id=actor_user.id,
         is_active=True,
     )
     db.add(campaign)
@@ -80,18 +95,24 @@ def create_campaign(db: Session, payload: CampaignCreateRequest, actor_user_id: 
         action="campaign.created",
         resource_type="campaign",
         resource_id=str(campaign.id),
-        actor_user_id=actor_user_id,
+        actor_user_id=actor_user.id,
         detail={"campaign_type": campaign.campaign_type, "name": campaign.name},
     )
     return campaign
 
 
-def list_campaigns(db: Session) -> list[Campaign]:
-    return list(db.execute(select(Campaign).order_by(Campaign.id.desc())).scalars())
+def list_campaigns(db: Session, store_id: int | None = None) -> list[Campaign]:
+    stmt = select(Campaign).order_by(Campaign.id.desc())
+    if store_id is not None:
+        stmt = stmt.where(Campaign.store_id == store_id)
+    return list(db.execute(stmt).scalars())
 
 
-def get_campaign(db: Session, campaign_id: int) -> Campaign | None:
-    return db.execute(select(Campaign).where(Campaign.id == campaign_id)).scalar_one_or_none()
+def get_campaign(db: Session, campaign_id: int, store_id: int | None = None) -> Campaign | None:
+    stmt = select(Campaign).where(Campaign.id == campaign_id)
+    if store_id is not None:
+        stmt = stmt.where(Campaign.store_id == store_id)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 def update_campaign(
@@ -134,8 +155,8 @@ def update_campaign(
     return campaign
 
 
-def _validate_issue_member(db: Session, request: CouponIssueRequest) -> Member | None:
-    member = _get_member_by_code(db, request.member_code)
+def _validate_issue_member(db: Session, request: CouponIssueRequest, store_id: int | None) -> Member | None:
+    member = _get_member_by_code(db, request.member_code, store_id=store_id)
 
     if request.issuance_method == IssuanceMethod.ACCOUNT_ASSIGNMENT:
         if not member:
@@ -143,27 +164,28 @@ def _validate_issue_member(db: Session, request: CouponIssueRequest) -> Member |
         return member
 
     if request.member_code and not member:
-        raise ValueError("Member not found")
+        raise CampaignMemberNotFoundError("Member not found")
 
     return member
 
 
-def issue_coupon(db: Session, request: CouponIssueRequest, actor_user_id: int | None) -> tuple[Coupon, str | None]:
-    campaign = get_campaign(db, request.campaign_id)
+def issue_coupon(db: Session, request: CouponIssueRequest, actor_user: AuthUser) -> tuple[Coupon, str | None]:
+    campaign = get_campaign(db, request.campaign_id, store_id=actor_user.store_id)
     if not campaign:
-        raise ValueError("Campaign not found")
+        raise CampaignNotFoundError("Campaign not found")
     if not campaign.is_active:
         raise ValueError("Campaign is inactive")
 
-    member = _validate_issue_member(db, request)
+    member = _validate_issue_member(db, request, store_id=actor_user.store_id)
 
     code = _generate_coupon_code()
     coupon = Coupon(
+        store_id=campaign.store_id,
         campaign_id=campaign.id,
         coupon_code=code,
         issuance_method=request.issuance_method.value,
         member_id=member.id if member else None,
-        issued_by_user_id=actor_user_id,
+        issued_by_user_id=actor_user.id,
     )
     db.add(coupon)
     db.flush()
@@ -172,10 +194,11 @@ def issue_coupon(db: Session, request: CouponIssueRequest, actor_user_id: int | 
 
     db.add(
         CouponIssuanceEvent(
+            store_id=campaign.store_id,
             coupon_id=coupon.id,
             campaign_id=campaign.id,
             member_id=member.id if member else None,
-            operator_user_id=actor_user_id,
+            operator_user_id=actor_user.id,
             channel=request.issuance_method.value,
             qr_payload=qr_payload,
         )
@@ -186,40 +209,41 @@ def issue_coupon(db: Session, request: CouponIssueRequest, actor_user_id: int | 
         action="coupon.issued",
         resource_type="coupon",
         resource_id=str(coupon.id),
-        actor_user_id=actor_user_id,
+        actor_user_id=actor_user.id,
         detail={"coupon_code": coupon.coupon_code, "campaign_id": campaign.id},
     )
 
     return coupon, qr_payload
 
 
-def _count_redemptions_today(db: Session, campaign_id: int) -> int:
+def _count_redemptions_today(db: Session, campaign_id: int, store_id: int | None = None) -> int:
     today = date.today()
-    return int(
-        db.execute(
-            select(func.count(CouponRedemptionEvent.id)).where(
-                CouponRedemptionEvent.campaign_id == campaign_id,
-                CouponRedemptionEvent.status == RedemptionStatus.SUCCESS.value,
-                func.date(CouponRedemptionEvent.created_at) == str(today),
-            )
-        ).scalar_one()
-        or 0
+    stmt = select(func.count(CouponRedemptionEvent.id)).where(
+        CouponRedemptionEvent.campaign_id == campaign_id,
+        CouponRedemptionEvent.status == RedemptionStatus.SUCCESS.value,
+        func.date(CouponRedemptionEvent.created_at) == str(today),
     )
+    if store_id is not None:
+        stmt = stmt.where(CouponRedemptionEvent.store_id == store_id)
+    return int(db.execute(stmt).scalar_one() or 0)
 
 
-def _count_member_redemptions_today(db: Session, campaign_id: int, member_id: int) -> int:
+def _count_member_redemptions_today(
+    db: Session,
+    campaign_id: int,
+    member_id: int,
+    store_id: int | None = None,
+) -> int:
     today = date.today()
-    return int(
-        db.execute(
-            select(func.count(CouponRedemptionEvent.id)).where(
-                CouponRedemptionEvent.campaign_id == campaign_id,
-                CouponRedemptionEvent.member_id == member_id,
-                CouponRedemptionEvent.status == RedemptionStatus.SUCCESS.value,
-                func.date(CouponRedemptionEvent.created_at) == str(today),
-            )
-        ).scalar_one()
-        or 0
+    stmt = select(func.count(CouponRedemptionEvent.id)).where(
+        CouponRedemptionEvent.campaign_id == campaign_id,
+        CouponRedemptionEvent.member_id == member_id,
+        CouponRedemptionEvent.status == RedemptionStatus.SUCCESS.value,
+        func.date(CouponRedemptionEvent.created_at) == str(today),
     )
+    if store_id is not None:
+        stmt = stmt.where(CouponRedemptionEvent.store_id == store_id)
+    return int(db.execute(stmt).scalar_one() or 0)
 
 
 def _compute_discount(campaign: Campaign, pre_tax_amount: Decimal) -> Decimal:
@@ -255,13 +279,16 @@ def _reject_redemption(
 ) -> CouponRedeemResponse:
     logger.warning(
         "coupon_redeem_rejected",
-        extra={
-            "reason_code": reason_code,
-            "campaign_id": campaign.id if campaign else None,
-            "coupon_id": coupon.id if coupon else None,
-            "operator_user_id": operator_user_id,
-            "order_reference": order_reference,
-        },
+        extra=mask_record(
+            {
+                "reason_code": reason_code,
+                "campaign_id": campaign.id if campaign else None,
+                "coupon_id": coupon.id if coupon else None,
+                "operator_user_id": operator_user_id,
+                "order_reference": order_reference,
+            },
+            _SENSITIVE_LOG_KEYS,
+        ),
     )
     db.add(
         CouponRedemptionEvent(
@@ -269,6 +296,7 @@ def _reject_redemption(
             campaign_id=campaign.id if campaign else None,
             member_id=member_id,
             operator_user_id=operator_user_id,
+            store_id=campaign.store_id if campaign else None,
             order_reference=order_reference,
             pre_tax_amount=round_money(pre_tax_amount),
             discount_amount=Decimal("0.00"),
@@ -291,10 +319,12 @@ def redeem_coupon(
     db: Session,
     request: CouponRedeemRequest,
     operator_user_id: int | None,
+    operator_store_id: int | None = None,
 ) -> CouponRedeemResponse:
-    coupon = db.execute(
-        select(Coupon).where(Coupon.coupon_code == request.coupon_code).with_for_update()
-    ).scalar_one_or_none()
+    stmt = select(Coupon).where(Coupon.coupon_code == request.coupon_code)
+    if operator_store_id is not None:
+        stmt = stmt.where(Coupon.store_id == operator_store_id)
+    coupon = db.execute(stmt.with_for_update()).scalar_one_or_none()
 
     if not coupon:
         return _reject_redemption(
@@ -309,7 +339,7 @@ def redeem_coupon(
             message="Coupon not found.",
         )
 
-    campaign = get_campaign(db, coupon.campaign_id)
+    campaign = get_campaign(db, coupon.campaign_id, store_id=operator_store_id)
     if not campaign:
         return _reject_redemption(
             db,
@@ -323,7 +353,7 @@ def redeem_coupon(
             message="Campaign not found.",
         )
 
-    member = _get_member_by_code(db, request.member_code)
+    member = _get_member_by_code(db, request.member_code, store_id=operator_store_id)
 
     existing_success = db.execute(
         select(CouponRedemptionEvent).where(
@@ -371,7 +401,7 @@ def redeem_coupon(
             message="Campaign is not active for today.",
         )
 
-    if _count_redemptions_today(db, campaign.id) >= campaign.daily_redemption_cap:
+    if _count_redemptions_today(db, campaign.id, store_id=operator_store_id) >= campaign.daily_redemption_cap:
         return _reject_redemption(
             db,
             coupon=coupon,
@@ -410,7 +440,16 @@ def redeem_coupon(
             message="Member code is required for this coupon.",
         )
 
-    if member and _count_member_redemptions_today(db, campaign.id, member.id) >= campaign.per_member_daily_limit:
+    if (
+        member
+        and _count_member_redemptions_today(
+            db,
+            campaign.id,
+            member.id,
+            store_id=operator_store_id,
+        )
+        >= campaign.per_member_daily_limit
+    ):
         return _reject_redemption(
             db,
             coupon=coupon,
@@ -446,6 +485,7 @@ def redeem_coupon(
 
     db.add(
         CouponRedemptionEvent(
+            store_id=campaign.store_id,
             coupon_id=coupon.id,
             campaign_id=campaign.id,
             member_id=member.id if member else None,
@@ -475,13 +515,16 @@ def redeem_coupon(
 
     logger.info(
         "coupon_redeemed",
-        extra={
-            "campaign_id": campaign.id,
-            "coupon_id": coupon.id,
-            "operator_user_id": operator_user_id,
-            "discount_amount": str(discount_amount),
-            "order_reference": request.order_reference,
-        },
+        extra=mask_record(
+            {
+                "campaign_id": campaign.id,
+                "coupon_id": coupon.id,
+                "operator_user_id": operator_user_id,
+                "discount_amount": str(discount_amount),
+                "order_reference": request.order_reference,
+            },
+            _SENSITIVE_LOG_KEYS,
+        ),
     )
 
     return CouponRedeemResponse(

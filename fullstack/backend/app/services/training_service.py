@@ -34,25 +34,35 @@ def _normalize_topic_code(code: str) -> str:
     return code.strip().upper()
 
 
-def _get_topic(db: Session, topic_code: str) -> QuizTopic:
-    topic = db.execute(select(QuizTopic).where(QuizTopic.code == _normalize_topic_code(topic_code))).scalar_one_or_none()
+def _get_topic(db: Session, topic_code: str, store_id: int | None = None) -> QuizTopic:
+    stmt = select(QuizTopic).where(QuizTopic.code == _normalize_topic_code(topic_code))
+    if store_id is not None:
+        stmt = stmt.where(QuizTopic.store_id == store_id)
+    topic = db.execute(stmt).scalar_one_or_none()
     if not topic:
         raise TrainingError("Topic not found")
     return topic
 
 
-def list_topics(db: Session) -> list[TopicResponse]:
-    topics = db.execute(select(QuizTopic).order_by(QuizTopic.code.asc())).scalars().all()
+def list_topics(db: Session, store_id: int | None = None) -> list[TopicResponse]:
+    stmt = select(QuizTopic).order_by(QuizTopic.code.asc())
+    if store_id is not None:
+        stmt = stmt.where(QuizTopic.store_id == store_id)
+    topics = db.execute(stmt).scalars().all()
     return [TopicResponse(id=row.id, code=row.code, name=row.name, difficulty=row.difficulty) for row in topics]
 
 
 def create_topic(db: Session, payload: TopicCreateRequest, current_user: AuthUser) -> TopicResponse:
     code = _normalize_topic_code(payload.code)
-    exists = db.execute(select(QuizTopic.id).where(QuizTopic.code == code)).scalar_one_or_none()
+    exists_stmt = select(QuizTopic.id).where(QuizTopic.code == code)
+    if current_user.store_id is not None:
+        exists_stmt = exists_stmt.where(QuizTopic.store_id == current_user.store_id)
+    exists = db.execute(exists_stmt).scalar_one_or_none()
     if exists:
         raise TrainingError("Topic code already exists")
 
     topic = QuizTopic(
+        store_id=current_user.store_id,
         code=code,
         name=payload.name.strip(),
         difficulty=payload.difficulty.value,
@@ -74,8 +84,9 @@ def create_topic(db: Session, payload: TopicCreateRequest, current_user: AuthUse
 
 
 def create_question(db: Session, payload: QuestionCreateRequest, current_user: AuthUser) -> int:
-    topic = _get_topic(db, payload.topic_code)
+    topic = _get_topic(db, payload.topic_code, store_id=current_user.store_id)
     question = QuizQuestion(
+        store_id=topic.store_id,
         topic_id=topic.id,
         question_text=payload.question_text.strip(),
         option_a=payload.option_a,
@@ -100,9 +111,11 @@ def create_question(db: Session, payload: QuestionCreateRequest, current_user: A
 
 
 def assign_topic(db: Session, payload: AssignmentRequest, current_user: AuthUser) -> None:
-    topic = _get_topic(db, payload.topic_code)
+    topic = _get_topic(db, payload.topic_code, store_id=current_user.store_id)
     employee = db.execute(select(User).where(User.username == payload.employee_username.lower())).scalar_one_or_none()
     if not employee:
+        raise TrainingError("Employee not found")
+    if current_user.store_id is not None and employee.store_id != current_user.store_id:
         raise TrainingError("Employee not found")
 
     existing = db.execute(
@@ -117,6 +130,7 @@ def assign_topic(db: Session, payload: AssignmentRequest, current_user: AuthUser
     if not existing:
         db.add(
             QuizAssignment(
+                store_id=topic.store_id,
                 employee_user_id=employee.id,
                 topic_id=topic.id,
                 assigned_by_user_id=current_user.id,
@@ -136,6 +150,7 @@ def assign_topic(db: Session, payload: AssignmentRequest, current_user: AuthUser
     if not state:
         db.add(
             SpacedRepetitionState(
+                store_id=topic.store_id,
                 employee_user_id=employee.id,
                 topic_id=topic.id,
                 next_review_date=date.today(),
@@ -162,6 +177,11 @@ def get_review_queue(db: Session, current_user: AuthUser) -> list[ReviewQueueEnt
         select(SpacedRepetitionState, QuizTopic)
         .join(QuizTopic, QuizTopic.id == SpacedRepetitionState.topic_id)
         .where(SpacedRepetitionState.employee_user_id == current_user.id)
+        .where(
+            SpacedRepetitionState.store_id == current_user.store_id
+            if current_user.store_id is not None
+            else True
+        )
         .order_by(SpacedRepetitionState.next_review_date.asc(), QuizTopic.code.asc())
     ).all()
 
@@ -186,7 +206,19 @@ def _next_interval_days(difficulty: str, interval_days: int, consecutive_correct
 
 
 def submit_attempt(db: Session, payload: AttemptSubmitRequest, current_user: AuthUser) -> AttemptSubmitResponse:
-    topic = _get_topic(db, payload.topic_code)
+    topic = _get_topic(db, payload.topic_code, store_id=current_user.store_id)
+    assignment = db.execute(
+        select(QuizAssignment)
+        .where(
+            QuizAssignment.employee_user_id == current_user.id,
+            QuizAssignment.topic_id == topic.id,
+            QuizAssignment.active.is_(True),
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if not assignment:
+        raise TrainingError("No active assignment for this topic")
+
     question = db.execute(
         select(QuizQuestion).where(QuizQuestion.id == payload.question_id, QuizQuestion.topic_id == topic.id)
     ).scalar_one_or_none()
@@ -197,6 +229,7 @@ def submit_attempt(db: Session, payload: AttemptSubmitRequest, current_user: Aut
 
     db.add(
         QuizAttempt(
+            store_id=topic.store_id,
             employee_user_id=current_user.id,
             topic_id=topic.id,
             question_id=question.id,
@@ -216,6 +249,7 @@ def submit_attempt(db: Session, payload: AttemptSubmitRequest, current_user: Aut
 
     if not state:
         state = SpacedRepetitionState(
+            store_id=topic.store_id,
             employee_user_id=current_user.id,
             topic_id=topic.id,
             next_review_date=date.today(),
@@ -256,6 +290,7 @@ def submit_attempt(db: Session, payload: AttemptSubmitRequest, current_user: Aut
 
     db.add(
         ReviewQueueSnapshot(
+            store_id=topic.store_id,
             employee_user_id=current_user.id,
             topic_id=topic.id,
             due_date=state.next_review_date,
@@ -266,7 +301,7 @@ def submit_attempt(db: Session, payload: AttemptSubmitRequest, current_user: Aut
     return AttemptSubmitResponse(correct=correct, recommendation_reason=reason, next_review_date=state.next_review_date)
 
 
-def topic_stats(db: Session) -> list[TopicStatsResponse]:
+def topic_stats(db: Session, store_id: int | None = None) -> list[TopicStatsResponse]:
     rows = db.execute(
         select(
             QuizTopic.code,
@@ -275,6 +310,7 @@ def topic_stats(db: Session) -> list[TopicStatsResponse]:
         )
         .select_from(QuizTopic)
         .outerjoin(QuizAttempt, QuizAttempt.topic_id == QuizTopic.id)
+        .where(QuizTopic.store_id == store_id if store_id is not None else True)
         .group_by(QuizTopic.code)
         .order_by(QuizTopic.code.asc())
     ).all()
@@ -290,7 +326,7 @@ def topic_stats(db: Session) -> list[TopicStatsResponse]:
     return output
 
 
-def trend_points(db: Session, days: int = 14) -> list[TrainingTrendPoint]:
+def trend_points(db: Session, days: int = 14, store_id: int | None = None) -> list[TrainingTrendPoint]:
     start = date.today() - timedelta(days=max(1, days - 1))
     rows = db.execute(
         select(
@@ -299,6 +335,7 @@ def trend_points(db: Session, days: int = 14) -> list[TrainingTrendPoint]:
             func.coalesce(func.sum(case((QuizAttempt.is_correct.is_(True), 1), else_=0)), 0),
         )
         .where(and_(func.date(QuizAttempt.attempted_at) >= start, func.date(QuizAttempt.attempted_at) <= date.today()))
+        .where(QuizAttempt.store_id == store_id if store_id is not None else True)
         .group_by(func.date(QuizAttempt.attempted_at))
         .order_by(func.date(QuizAttempt.attempted_at).asc())
     ).all()

@@ -1,5 +1,6 @@
 ﻿from datetime import datetime, timedelta, timezone
 import base64
+import binascii
 import hashlib
 import hmac
 import os
@@ -27,6 +28,7 @@ ALL_ROLES = {
 
 PBKDF2_PREFIX = "pbkdf2_sha256"
 PBKDF2_ROUNDS = 240_000
+_PBKDF2_ALLOWED_ENVS = {"local", "dev", "development", "test"}
 
 
 def _pbkdf2_hash(raw_password: str) -> str:
@@ -42,7 +44,7 @@ def _pbkdf2_verify(raw_password: str, encoded: str) -> bool:
         _prefix, salt_b64, digest_b64 = encoded.split("$", 2)
         salt = base64.urlsafe_b64decode(salt_b64.encode("ascii"))
         expected = base64.urlsafe_b64decode(digest_b64.encode("ascii"))
-    except (ValueError, base64.binascii.Error):
+    except (ValueError, binascii.Error):
         return False
 
     candidate = hashlib.pbkdf2_hmac("sha256", raw_password.encode("utf-8"), salt, PBKDF2_ROUNDS)
@@ -57,9 +59,20 @@ def password_is_valid(raw_password: str) -> bool:
     return len(raw_password) >= settings.auth_min_password_length
 
 
+def bcrypt_required() -> bool:
+    return settings.app_env.strip().lower() not in _PBKDF2_ALLOWED_ENVS
+
+
+def assert_password_hashing_backend_ready() -> None:
+    if bcrypt_required() and _bcrypt is None:
+        raise RuntimeError("bcrypt dependency is required when app_env is not local/dev/test")
+
+
 def hash_password(raw_password: str) -> str:
     if _bcrypt is not None:
         return _bcrypt.hashpw(raw_password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+    if bcrypt_required():
+        raise RuntimeError("bcrypt dependency is required when app_env is not local/dev/test")
     return _pbkdf2_hash(raw_password)
 
 

@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps.auth import require_roles
-from app.core.errors import bad_request
+from app.core.errors import bad_request, conflict, not_found
 from app.db.session import get_db
 from app.schemas.auth import AuthUser
 from app.schemas.loyalty import (
@@ -38,10 +38,10 @@ router = APIRouter(prefix="/members", tags=["members"])
 @router.get("", response_model=list[MemberResponse])
 def member_list(
     search: str | None = Query(default=None),
-    _: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
+    current_user: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
     db: Session = Depends(get_db),
 ) -> list[MemberResponse]:
-    members = list_members(db, search)
+    members = list_members(db, search, store_id=current_user.store_id)
     return [to_member_response(db, member) for member in members]
 
 
@@ -52,12 +52,12 @@ def member_create(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     try:
-        response = create_member(db, payload, current_user.id)
+        response = create_member(db, payload, current_user.id, current_user.store_id)
         db.commit()
         return response
     except IntegrityError:
         db.rollback()
-        raise bad_request("Member code already exists")
+        raise conflict("Member code already exists")
     except ValueError as exc:
         db.rollback()
         raise bad_request(str(exc))
@@ -66,13 +66,13 @@ def member_create(
 @router.get("/{member_code}", response_model=MemberResponse)
 def member_lookup(
     member_code: str,
-    _: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
+    current_user: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     try:
-        member = get_member_by_code_or_raise(db, member_code)
+        member = get_member_by_code_or_raise(db, member_code, store_id=current_user.store_id)
     except MemberNotFoundError as exc:
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
     return to_member_response(db, member)
 
 
@@ -84,12 +84,12 @@ def member_update(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     try:
-        response = update_member(db, member_code, payload, current_user.id)
+        response = update_member(db, member_code, payload, current_user.id, current_user.store_id)
         db.commit()
         return response
     except MemberNotFoundError as exc:
         db.rollback()
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
     except ValueError as exc:
         db.rollback()
         raise bad_request(str(exc))
@@ -103,12 +103,12 @@ def member_points_accrue(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     try:
-        response, _entry = accrue_points(db, member_code, payload, current_user.id)
+        response, _entry = accrue_points(db, member_code, payload, current_user.id, current_user.store_id)
         db.commit()
         return response
     except MemberNotFoundError as exc:
         db.rollback()
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
 
 
 @router.post("/{member_code}/points/adjust", response_model=MemberResponse)
@@ -119,12 +119,12 @@ def member_points_adjust(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     try:
-        response, _entry = adjust_points(db, member_code, payload, current_user.id)
+        response, _entry = adjust_points(db, member_code, payload, current_user.id, current_user.store_id)
         db.commit()
         return response
     except MemberNotFoundError as exc:
         db.rollback()
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
 
 
 @router.post("/{member_code}/wallet/credit", response_model=MemberResponse)
@@ -135,12 +135,15 @@ def member_wallet_credit(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     try:
-        response, _entry = credit_wallet(db, member_code, payload, current_user.id)
+        response, _entry = credit_wallet(db, member_code, payload, current_user.id, current_user.store_id)
         db.commit()
         return response
-    except (MemberNotFoundError, WalletOperationError) as exc:
+    except MemberNotFoundError as exc:
         db.rollback()
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
+    except WalletOperationError as exc:
+        db.rollback()
+        raise conflict(str(exc))
 
 
 @router.post("/{member_code}/wallet/debit", response_model=MemberResponse)
@@ -151,24 +154,27 @@ def member_wallet_debit(
     db: Session = Depends(get_db),
 ) -> MemberResponse:
     try:
-        response, _entry = debit_wallet(db, member_code, payload, current_user.id)
+        response, _entry = debit_wallet(db, member_code, payload, current_user.id, current_user.store_id)
         db.commit()
         return response
-    except (MemberNotFoundError, WalletOperationError) as exc:
+    except MemberNotFoundError as exc:
         db.rollback()
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
+    except WalletOperationError as exc:
+        db.rollback()
+        raise conflict(str(exc))
 
 
 @router.get("/{member_code}/points-ledger", response_model=list[PointsLedgerEntry])
 def member_points_ledger(
     member_code: str,
-    _: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
+    current_user: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
     db: Session = Depends(get_db),
 ) -> list[PointsLedgerEntry]:
     try:
-        member = get_member_by_code_or_raise(db, member_code)
+        member = get_member_by_code_or_raise(db, member_code, store_id=current_user.store_id)
     except MemberNotFoundError as exc:
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
     entries = get_points_ledger(db, member.id)
     return [
         PointsLedgerEntry(
@@ -185,13 +191,13 @@ def member_points_ledger(
 @router.get("/{member_code}/wallet-ledger", response_model=list[WalletLedgerEntry])
 def member_wallet_ledger(
     member_code: str,
-    _: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
+    current_user: AuthUser = Depends(require_roles({"administrator", "store_manager", "cashier"})),
     db: Session = Depends(get_db),
 ) -> list[WalletLedgerEntry]:
     try:
-        member = get_member_by_code_or_raise(db, member_code)
+        member = get_member_by_code_or_raise(db, member_code, store_id=current_user.store_id)
     except MemberNotFoundError as exc:
-        raise bad_request(str(exc))
+        raise not_found(str(exc))
     entries = get_wallet_ledger(db, member.id)
     return [
         WalletLedgerEntry(

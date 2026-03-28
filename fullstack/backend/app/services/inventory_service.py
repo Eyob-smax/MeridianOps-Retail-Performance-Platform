@@ -28,11 +28,13 @@ from app.schemas.inventory import (
     ReservationResponse,
     TransferRequest,
 )
+from app.core.masking import mask_record
 from app.services.audit_service import audit_event
 from app.services.inventory_math import quantize_qty
 
 
 logger = logging.getLogger("meridianops.inventory")
+_SENSITIVE_LOG_KEYS = {"order_reference"}
 
 
 class InventoryError(ValueError):
@@ -54,8 +56,11 @@ def _get_item_by_sku(db: Session, sku: str) -> InventoryItem:
     return row
 
 
-def _get_location_by_code(db: Session, code: str) -> InventoryLocation:
-    row = db.execute(select(InventoryLocation).where(InventoryLocation.code == _normalize_code(code))).scalar_one_or_none()
+def _get_location_by_code(db: Session, code: str, store_id: int | None = None) -> InventoryLocation:
+    stmt = select(InventoryLocation).where(InventoryLocation.code == _normalize_code(code))
+    if store_id is not None:
+        stmt = stmt.where(InventoryLocation.store_id == store_id)
+    row = db.execute(stmt).scalar_one_or_none()
     if not row:
         raise InventoryError(f"Location not found for code {code}")
     return row
@@ -127,7 +132,7 @@ def create_location(db: Session, payload: InventoryLocationCreateRequest, curren
     if exists:
         raise InventoryError("Location code already exists")
 
-    row = InventoryLocation(code=code, name=payload.name.strip())
+    row = InventoryLocation(code=code, name=payload.name.strip(), store_id=current_user.store_id)
     db.add(row)
     db.flush()
 
@@ -144,7 +149,7 @@ def create_location(db: Session, payload: InventoryLocationCreateRequest, curren
 
 
 def post_receiving(db: Session, payload: ReceivingRequest, current_user: AuthUser) -> InventoryDocumentResponse:
-    location = _get_location_by_code(db, payload.location_code)
+    location = _get_location_by_code(db, payload.location_code, store_id=current_user.store_id)
     if not payload.lines:
         raise InventoryError("At least one line is required")
 
@@ -152,6 +157,7 @@ def post_receiving(db: Session, payload: ReceivingRequest, current_user: AuthUse
         doc_type="receiving",
         status="posted",
         target_location_id=location.id,
+        store_id=location.store_id,
         note=payload.note,
         operator_user_id=current_user.id,
     )
@@ -181,6 +187,7 @@ def post_receiving(db: Session, payload: ReceivingRequest, current_user: AuthUse
             InventoryLedger(
                 item_id=item.id,
                 location_id=location.id,
+                store_id=location.store_id,
                 entry_type="receiving",
                 quantity_delta=qty,
                 reservation_delta=Decimal("0"),
@@ -204,8 +211,8 @@ def post_receiving(db: Session, payload: ReceivingRequest, current_user: AuthUse
 
 
 def post_transfer(db: Session, payload: TransferRequest, current_user: AuthUser) -> InventoryDocumentResponse:
-    source = _get_location_by_code(db, payload.source_location_code)
-    target = _get_location_by_code(db, payload.target_location_code)
+    source = _get_location_by_code(db, payload.source_location_code, store_id=current_user.store_id)
+    target = _get_location_by_code(db, payload.target_location_code, store_id=current_user.store_id)
     if source.id == target.id:
         raise InventoryError("Source and target locations must be different")
     if not payload.lines:
@@ -216,6 +223,7 @@ def post_transfer(db: Session, payload: TransferRequest, current_user: AuthUser)
         status="posted",
         source_location_id=source.id,
         target_location_id=target.id,
+        store_id=source.store_id,
         note=payload.note,
         operator_user_id=current_user.id,
     )
@@ -244,6 +252,7 @@ def post_transfer(db: Session, payload: TransferRequest, current_user: AuthUser)
             InventoryLedger(
                 item_id=item.id,
                 location_id=source.id,
+                store_id=source.store_id,
                 entry_type="transfer_out",
                 quantity_delta=-qty,
                 reservation_delta=Decimal("0"),
@@ -257,6 +266,7 @@ def post_transfer(db: Session, payload: TransferRequest, current_user: AuthUser)
             InventoryLedger(
                 item_id=item.id,
                 location_id=target.id,
+                store_id=target.store_id,
                 entry_type="transfer_in",
                 quantity_delta=qty,
                 reservation_delta=Decimal("0"),
@@ -280,7 +290,7 @@ def post_transfer(db: Session, payload: TransferRequest, current_user: AuthUser)
 
 
 def post_count(db: Session, payload: CountRequest, current_user: AuthUser) -> InventoryDocumentResponse:
-    location = _get_location_by_code(db, payload.location_code)
+    location = _get_location_by_code(db, payload.location_code, store_id=current_user.store_id)
     if not payload.lines:
         raise InventoryError("At least one line is required")
 
@@ -288,6 +298,7 @@ def post_count(db: Session, payload: CountRequest, current_user: AuthUser) -> In
         doc_type="stock_count",
         status="posted",
         target_location_id=location.id,
+        store_id=location.store_id,
         note=payload.note,
         operator_user_id=current_user.id,
     )
@@ -315,6 +326,7 @@ def post_count(db: Session, payload: CountRequest, current_user: AuthUser) -> In
             InventoryLedger(
                 item_id=item.id,
                 location_id=location.id,
+                store_id=location.store_id,
                 entry_type="count_adjustment",
                 quantity_delta=variance,
                 reservation_delta=Decimal("0"),
@@ -339,7 +351,7 @@ def post_count(db: Session, payload: CountRequest, current_user: AuthUser) -> In
 
 def create_reservation(db: Session, payload: ReservationCreateRequest, current_user: AuthUser) -> ReservationResponse:
     item = _get_item_by_sku(db, payload.sku)
-    location = _get_location_by_code(db, payload.location_code)
+    location = _get_location_by_code(db, payload.location_code, store_id=current_user.store_id)
     qty = quantize_qty(payload.quantity)
 
     # Lock open reservations for this position before evaluating availability.
@@ -361,6 +373,7 @@ def create_reservation(db: Session, payload: ReservationCreateRequest, current_u
         order_reference=payload.order_reference.strip(),
         item_id=item.id,
         location_id=location.id,
+        store_id=location.store_id,
         reserved_qty=qty,
         released_qty=Decimal("0"),
         status="open",
@@ -373,6 +386,7 @@ def create_reservation(db: Session, payload: ReservationCreateRequest, current_u
         InventoryLedger(
             item_id=item.id,
             location_id=location.id,
+            store_id=location.store_id,
             entry_type="reservation_create",
             quantity_delta=Decimal("0"),
             reservation_delta=qty,
@@ -392,14 +406,17 @@ def create_reservation(db: Session, payload: ReservationCreateRequest, current_u
 
     logger.info(
         "inventory_reservation_created",
-        extra={
-            "reservation_id": reservation.id,
-            "order_reference": reservation.order_reference,
-            "sku": item.sku,
-            "location_code": location.code,
-            "reserved_qty": str(qty),
-            "operator_user_id": current_user.id,
-        },
+        extra=mask_record(
+            {
+                "reservation_id": reservation.id,
+                "order_reference": reservation.order_reference,
+                "sku": item.sku,
+                "location_code": location.code,
+                "reserved_qty": str(qty),
+                "operator_user_id": current_user.id,
+            },
+            _SENSITIVE_LOG_KEYS,
+        ),
     )
 
     return ReservationResponse(
@@ -422,6 +439,8 @@ def release_reservation(db: Session, payload: ReservationReleaseRequest, current
 
     item = db.execute(select(InventoryItem).where(InventoryItem.id == reservation.item_id)).scalar_one()
     location = db.execute(select(InventoryLocation).where(InventoryLocation.id == reservation.location_id)).scalar_one()
+    if current_user.store_id is not None and reservation.store_id != current_user.store_id:
+        raise InventoryError("Reservation not found")
 
     remaining = quantize_qty(Decimal(reservation.reserved_qty) - Decimal(reservation.released_qty))
     if remaining > Decimal("0"):
@@ -433,6 +452,7 @@ def release_reservation(db: Session, payload: ReservationReleaseRequest, current
             InventoryLedger(
                 item_id=reservation.item_id,
                 location_id=reservation.location_id,
+                store_id=location.store_id,
                 entry_type="reservation_release",
                 quantity_delta=Decimal("0"),
                 reservation_delta=-remaining,
@@ -452,14 +472,17 @@ def release_reservation(db: Session, payload: ReservationReleaseRequest, current
 
         logger.info(
             "inventory_reservation_released",
-            extra={
-                "reservation_id": reservation.id,
-                "order_reference": reservation.order_reference,
-                "sku": item.sku,
-                "location_code": location.code,
-                "released_qty": str(remaining),
-                "operator_user_id": current_user.id,
-            },
+            extra=mask_record(
+                {
+                    "reservation_id": reservation.id,
+                    "order_reference": reservation.order_reference,
+                    "sku": item.sku,
+                    "location_code": location.code,
+                    "released_qty": str(remaining),
+                    "operator_user_id": current_user.id,
+                },
+                _SENSITIVE_LOG_KEYS,
+            ),
         )
 
     return ReservationResponse(
@@ -473,14 +496,21 @@ def release_reservation(db: Session, payload: ReservationReleaseRequest, current
     )
 
 
-def list_positions(db: Session, sku: str | None, location_code: str | None) -> list[InventoryPositionResponse]:
+def list_positions(
+    db: Session,
+    sku: str | None,
+    location_code: str | None,
+    store_id: int | None,
+) -> list[InventoryPositionResponse]:
     conditions = []
     if sku:
         item = _get_item_by_sku(db, sku)
         conditions.append(InventoryLedger.item_id == item.id)
     if location_code:
-        location = _get_location_by_code(db, location_code)
+        location = _get_location_by_code(db, location_code, store_id=store_id)
         conditions.append(InventoryLedger.location_id == location.id)
+    if store_id is not None:
+        conditions.append(InventoryLedger.store_id == store_id)
 
     rows = db.execute(
         select(InventoryLedger.item_id, InventoryLedger.location_id)
@@ -497,14 +527,17 @@ def list_positions(db: Session, sku: str | None, location_code: str | None) -> l
     return responses
 
 
-def get_position(db: Session, sku: str, location_code: str) -> InventoryPositionResponse:
+def get_position(db: Session, sku: str, location_code: str, store_id: int | None) -> InventoryPositionResponse:
     item = _get_item_by_sku(db, sku)
-    location = _get_location_by_code(db, location_code)
+    location = _get_location_by_code(db, location_code, store_id=store_id)
     return _position_response(db, item, location)
 
 
-def list_ledger_entries(db: Session, limit: int = 200) -> list[InventoryLedgerEntryResponse]:
-    rows = db.execute(select(InventoryLedger).order_by(InventoryLedger.id.desc()).limit(limit)).scalars().all()
+def list_ledger_entries(db: Session, limit: int = 200, store_id: int | None = None) -> list[InventoryLedgerEntryResponse]:
+    stmt = select(InventoryLedger).order_by(InventoryLedger.id.desc()).limit(limit)
+    if store_id is not None:
+        stmt = stmt.where(InventoryLedger.store_id == store_id)
+    rows = db.execute(stmt).scalars().all()
     responses: list[InventoryLedgerEntryResponse] = []
     for row in rows:
         item = db.execute(select(InventoryItem).where(InventoryItem.id == row.item_id)).scalar_one()

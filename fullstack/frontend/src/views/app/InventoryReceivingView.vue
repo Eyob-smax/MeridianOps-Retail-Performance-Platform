@@ -23,6 +23,7 @@
         <input v-model="receiveSku" placeholder="SKU" />
         <input v-model="receiveQty" placeholder="Quantity" />
         <input v-model="receiveBatch" placeholder="Batch no (optional)" />
+        <input v-model="receiveExpiryDate" type="date" placeholder="Expiry date (optional)" />
       </div>
       <button class="btn" @click="onReceive">Post Receiving</button>
     </section>
@@ -100,6 +101,7 @@ const locationCode = ref("MAIN");
 const receiveSku = ref("SKU-100");
 const receiveQty = ref("20.000");
 const receiveBatch = ref("");
+const receiveExpiryDate = ref("");
 
 const orderReference = ref("ORDER-INV-1");
 const reservationSku = ref("SKU-100");
@@ -148,6 +150,7 @@ async function onReceive() {
           sku: receiveSku.value,
           quantity: receiveQty.value,
           batch_no: receiveBatch.value || undefined,
+          expiry_date: receiveExpiryDate.value || undefined,
         },
       ],
     });

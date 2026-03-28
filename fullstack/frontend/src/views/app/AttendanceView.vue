@@ -7,8 +7,8 @@
       <h2>Rules</h2>
       <p v-if="rules">
         Tolerance: {{ rules.tolerance_minutes }} min | Auto-break after
-        {{ rules.auto_break_after_hours }}h ({{ rules.auto_break_minutes }} min) | Penalty
-        {{ rules.late_early_penalty_hours }}h
+        {{ rules.auto_break_after_hours }}h ({{ rules.auto_break_minutes }} min) | Cross-day cutoff
+        {{ rules.cross_day_shift_cutoff_hour }}:00 | Penalty {{ rules.late_early_penalty_hours }}h
       </p>
       <button class="btn" @click="refreshRules">Refresh Rules</button>
       <button class="btn" @click="onRotateQr">Rotate QR Token</button>
@@ -20,6 +20,9 @@
       <div class="form-grid">
         <input v-model="deviceId" placeholder="Device ID" />
         <input v-model="qrToken" placeholder="QR Token" />
+        <input v-model="checkInNfcTag" placeholder="NFC Tag (optional)" />
+        <input v-model="checkInLatitude" placeholder="Latitude (optional)" />
+        <input v-model="checkInLongitude" placeholder="Longitude (optional)" />
       </div>
       <button class="btn" @click="onCheckIn">Check In</button>
     </section>
@@ -28,10 +31,14 @@
       <h2>Check Out</h2>
       <div class="form-grid">
         <input v-model="checkoutQrToken" placeholder="QR Token" />
+        <input v-model="checkOutNfcTag" placeholder="NFC Tag (optional)" />
+        <input v-model="checkOutLatitude" placeholder="Latitude (optional)" />
+        <input v-model="checkOutLongitude" placeholder="Longitude (optional)" />
       </div>
       <button class="btn" @click="onCheckOut">Check Out</button>
       <p v-if="checkoutSummary">
-        Worked {{ checkoutSummary.daily_result.worked_hours }}h, Break
+        Business date {{ checkoutSummary.daily_result.business_date }} | Worked
+        {{ checkoutSummary.daily_result.worked_hours }}h, Break
         {{ checkoutSummary.daily_result.auto_break_minutes }}m, Penalty
         {{ checkoutSummary.daily_result.penalty_hours }}h
       </p>
@@ -87,13 +94,20 @@ const shifts = ref<AttendanceShiftRow[]>([]);
 const deviceId = ref("DEVICE-EMP-1");
 const qrToken = ref("");
 const checkoutQrToken = ref("");
+const checkInNfcTag = ref("");
+const checkInLatitude = ref("");
+const checkInLongitude = ref("");
+const checkOutNfcTag = ref("");
+const checkOutLatitude = ref("");
+const checkOutLongitude = ref("");
 const currentQrToken = ref("");
 const checkoutSummary = ref<{
   shift: AttendanceShiftRow;
   daily_result: {
-    worked_hours: string;
-    auto_break_minutes: number;
-    penalty_hours: string;
+      business_date: string;
+      worked_hours: string;
+      auto_break_minutes: number;
+      penalty_hours: string;
   };
 } | null>(null);
 
@@ -128,9 +142,12 @@ async function onCheckIn() {
     await attendanceCheckIn({
       device_id: deviceId.value,
       qr_token: qrToken.value,
+      nfc_tag: checkInNfcTag.value || undefined,
       check_in_at: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
       scheduled_start_at: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
       scheduled_end_at: new Date().toISOString(),
+      latitude: checkInLatitude.value || undefined,
+      longitude: checkInLongitude.value || undefined,
     });
     await refreshShifts();
     message.value = "Checked in.";
@@ -147,7 +164,10 @@ async function onCheckOut() {
     checkoutSummary.value = await attendanceCheckOut({
       device_id: deviceId.value,
       qr_token: checkoutQrToken.value,
+      nfc_tag: checkOutNfcTag.value || undefined,
       check_out_at: new Date().toISOString(),
+      latitude: checkOutLatitude.value || undefined,
+      longitude: checkOutLongitude.value || undefined,
     });
     await refreshShifts();
     message.value = "Checked out.";

@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.router import api_router
 from app.api.v1.endpoints.operations import register_scheduler
 from app.core.config import settings
+from app.core.security import assert_password_hashing_backend_ready
 from app.services.scheduler_service import NightlyScheduler
 
 
@@ -55,6 +56,7 @@ def _build_error_payload(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    assert_password_hashing_backend_ready()
     if settings.scheduler_enabled and settings.scheduler_start_on_boot:
         scheduler.start()
     try:

@@ -1,0 +1,66 @@
+{
+  "summary": "Implemented store-scoped data isolation, NFC attendance support, KPI-backed analytics data, and added coverage for key risk areas.",
+  "fixes": [
+    {
+      "area": "Multi-store isolation",
+      "details": [
+        "Added store_id columns across user, member, inventory, training, and attendance tables.",
+        "Scoped inventory, training, loyalty, and attendance queries by current user's store_id.",
+        "Updated auth/session payloads to include store_id for downstream scoping."
+      ],
+      "files": [
+        "fullstack/backend/app/db/models/system.py",
+        "fullstack/backend/app/db/models/loyalty.py",
+        "fullstack/backend/app/db/models/ops_training.py",
+        "fullstack/backend/app/db/models/attendance.py",
+        "fullstack/backend/app/services/inventory_service.py",
+        "fullstack/backend/app/services/training_service.py",
+        "fullstack/backend/app/services/attendance_service.py",
+        "fullstack/backend/app/services/loyalty_service.py",
+        "fullstack/backend/app/api/v1/endpoints/inventory.py",
+        "fullstack/backend/app/api/v1/endpoints/training.py",
+        "fullstack/backend/app/api/v1/endpoints/attendance.py",
+        "fullstack/backend/app/schemas/auth.py",
+        "fullstack/frontend/src/services/auth.ts"
+      ]
+    },
+    {
+      "area": "Attendance NFC support",
+      "details": [
+        "Added NFC badge bindings and optional NFC tag auth for check-in/out.",
+        "Persisted NFC badge linkage for reuse and validation."
+      ],
+      "files": [
+        "fullstack/backend/app/db/models/attendance.py",
+        "fullstack/backend/app/services/attendance_service.py",
+        "fullstack/backend/app/schemas/attendance.py",
+        "fullstack/frontend/src/services/attendance.ts"
+      ]
+    },
+    {
+      "area": "Analytics data integrity",
+      "details": [
+        "Replaced synthetic analytics rows with KPI materialization data from kpi_daily_metrics."
+      ],
+      "files": ["fullstack/backend/app/services/analytics_service.py"]
+    },
+    {
+      "area": "Database migration",
+      "details": [
+        "Added migration for store_id columns and NFC badge tables/fields."
+      ],
+      "files": [
+        "fullstack/backend/alembic/versions/20260327_0008_store_scoping_nfc.py"
+      ]
+    }
+  ],
+  "tests_added": [
+    "fullstack/backend/tests/test_inventory_workflow.py::test_inventory_store_isolation",
+    "fullstack/backend/tests/test_attendance_flow.py::test_attendance_nfc_checkin_checkout_creates_badge",
+    "fullstack/backend/tests/test_ops_kpi.py::test_dashboard_data_uses_kpi_metrics",
+    "fullstack/backend/tests/test_auth_security.py::test_member_store_isolation",
+    "fullstack/backend/tests/test_training_flow.py::test_training_store_isolation",
+    "fullstack/frontend/src/services/attendance.spec.ts::submits nfc checkin checkout",
+    "fullstack/frontend/src/services/auth.spec.ts::auth service"
+  ]
+}

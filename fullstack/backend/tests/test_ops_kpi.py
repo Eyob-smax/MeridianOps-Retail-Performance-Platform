@@ -9,7 +9,8 @@ from pypdf import PdfReader
 from sqlalchemy import select
 
 from app.cli import backfill_kpi
-from app.db.models import AuditLog, KPIDailyMetric, KPIJobRun
+from app.db.models import AuditLog, InventoryItem, InventoryLedger, InventoryLocation, KPIDailyMetric, KPIJobRun
+from app.services.auth_service import create_user
 from app.services import kpi_service
 from app.services.scheduler_service import NightlyScheduler
 
@@ -82,6 +83,71 @@ def test_operations_permissions_and_scheduler_controls(client) -> None:
     assert seed_response.status_code == 200
 
 
+def test_store_manager_cannot_access_other_store_kpi_data(client, db_session) -> None:
+    metric_date = date.today()
+    db_session.add(
+        KPIDailyMetric(
+            business_date=metric_date,
+            store_id=102,
+            conversion_rate=Decimal("0.1000"),
+            average_order_value=Decimal("25.50"),
+            inventory_turnover=Decimal("1.0000"),
+            total_attempts=10,
+            successful_orders=4,
+            revenue_total=Decimal("123.45"),
+            inventory_outbound_qty=Decimal("5.000"),
+            average_inventory_qty=Decimal("10.000"),
+            run_id=None,
+        )
+    )
+    db_session.commit()
+
+    _login(client, "manager")
+
+    denied_metrics = client.get(
+        "/api/v1/ops/kpi/metrics",
+        params={"start_date": metric_date.isoformat(), "end_date": metric_date.isoformat(), "store_id": 102},
+    )
+    assert denied_metrics.status_code == 403
+
+    denied_backfill = client.post(
+        "/api/v1/ops/kpi/backfill",
+        json={
+            "start_date": metric_date.isoformat(),
+            "end_date": metric_date.isoformat(),
+            "store_ids": [102],
+        },
+    )
+    assert denied_backfill.status_code == 403
+
+    own_store_metrics = client.get(
+        "/api/v1/ops/kpi/metrics",
+        params={"start_date": metric_date.isoformat(), "end_date": metric_date.isoformat()},
+    )
+    assert own_store_metrics.status_code == 200
+
+
+def test_store_manager_cannot_access_other_store_dashboard_audit(client, db_session) -> None:
+    create_user(
+        db=db_session,
+        username="manager102",
+        password="ChangeMeNow123",
+        display_name="Store Manager 102",
+        roles=["store_manager"],
+        store_id=102,
+    )
+    db_session.commit()
+
+    _login(client, "manager")
+    dashboard_id = _create_dashboard(client)
+    audit = client.get(f"/api/v1/analytics/dashboards/{dashboard_id}/audit")
+    assert audit.status_code == 200
+
+    _login(client, "manager102")
+    forbidden_audit = client.get(f"/api/v1/analytics/dashboards/{dashboard_id}/audit")
+    assert forbidden_audit.status_code == 403
+
+
 def test_kpi_backfill_materializes_metrics_and_logs_runs(client, db_session) -> None:
     _login(client, "admin")
     seeded = client.post("/api/v1/ops/seed/demo")
@@ -130,6 +196,50 @@ def test_kpi_backfill_materializes_metrics_and_logs_runs(client, db_session) -> 
     assert persisted
 
 
+def test_dashboard_data_uses_kpi_metrics(client, db_session) -> None:
+    metric_date = date.today()
+    db_session.add(
+        KPIDailyMetric(
+            business_date=metric_date,
+            store_id=101,
+            conversion_rate=Decimal("0.1000"),
+            average_order_value=Decimal("25.50"),
+            inventory_turnover=Decimal("1.0000"),
+            total_attempts=10,
+            successful_orders=4,
+            revenue_total=Decimal("123.45"),
+            inventory_outbound_qty=Decimal("5.000"),
+            average_inventory_qty=Decimal("10.000"),
+            run_id=None,
+        )
+    )
+    db_session.commit()
+
+    _login(client, "manager")
+    dashboard_id = _create_dashboard(client)
+
+    detail = client.get(
+        f"/api/v1/analytics/dashboards/{dashboard_id}",
+        params={
+            "store_ids": "101",
+            "start_date": metric_date.isoformat(),
+            "end_date": metric_date.isoformat(),
+        },
+    )
+    assert detail.status_code == 200
+
+    payload = detail.json()
+    rows = payload["data"]["rows"]
+    assert rows
+    row = rows[0]
+    assert row["orders"] == 4
+    assert Decimal(row["revenue"]) == Decimal("123.45")
+
+    totals = payload["data"]["totals"]
+    assert totals["orders"] == 4
+    assert Decimal(totals["revenue"]) == Decimal("123.45")
+
+
 def test_kpi_retry_and_failure_status_tracking(db_session, monkeypatch) -> None:
     attempts = {"count": 0}
 
@@ -174,6 +284,53 @@ def test_kpi_retry_and_failure_status_tracking(db_session, monkeypatch) -> None:
 
     persisted = db_session.execute(select(KPIJobRun).where(KPIJobRun.id == run_failed.id)).scalar_one()
     assert persisted.finished_at is not None
+
+
+def test_kpi_inventory_turnover_scopes_by_store_id_not_location_id(db_session) -> None:
+    metric_date = date.today()
+
+    item = InventoryItem(sku="SKU-KPI-1", name="KPI Item", unit="ea")
+    db_session.add(item)
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            InventoryLocation(id=902, store_id=902, code="LOC-902", name="Legacy 902"),
+            InventoryLocation(id=903, store_id=903, code="LOC-903", name="Legacy 903"),
+        ]
+    )
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            # This row belongs to store 101 but intentionally uses location_id 902.
+            InventoryLedger(
+                store_id=101,
+                item_id=item.id,
+                location_id=902,
+                entry_type="transfer_out",
+                quantity_delta=Decimal("-10.000"),
+                reservation_delta=Decimal("0.000"),
+                order_reference="S101-TURNOVER-1",
+                created_at=datetime.combine(metric_date, datetime.min.time(), tzinfo=timezone.utc),
+            ),
+            # This row belongs to store 902 and should not be counted for store 101.
+            InventoryLedger(
+                store_id=902,
+                item_id=item.id,
+                location_id=902,
+                entry_type="transfer_out",
+                quantity_delta=Decimal("-90.000"),
+                reservation_delta=Decimal("0.000"),
+                order_reference="S902-TURNOVER-1",
+                created_at=datetime.combine(metric_date, datetime.min.time(), tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    outbound_qty, _avg_inventory_qty, _turnover = kpi_service._read_inventory_turnover(db_session, metric_date, 101)
+    assert outbound_qty == Decimal("10.000")
 
 
 def test_backfill_cli_command_invokes_range(monkeypatch, capsys) -> None:

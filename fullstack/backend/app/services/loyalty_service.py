@@ -3,6 +3,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.encryption import field_encryptor
 from app.db.models import Member, PointsLedger, WalletAccount, WalletLedger
 from app.schemas.loyalty import (
     MemberCreateRequest,
@@ -25,22 +26,43 @@ class WalletOperationError(ValueError):
     pass
 
 
-def _get_member_by_code(db: Session, member_code: str) -> Member | None:
+def _encrypt_name(value: str) -> str:
+    if not field_encryptor.enabled:
+        return value
+    return field_encryptor.encrypt(value) or ""
+
+
+def _decrypt_name(value: str) -> str:
+    if not field_encryptor.enabled:
+        return value
+    return field_encryptor.decrypt(value) or ""
+
+
+def _get_member_by_code(db: Session, member_code: str, store_id: int | None = None) -> Member | None:
     normalized = member_code.strip().upper()
-    return db.execute(select(Member).where(Member.member_code == normalized)).scalar_one_or_none()
+    stmt = select(Member).where(Member.member_code == normalized)
+    if store_id is not None:
+        stmt = stmt.where(Member.store_id == store_id)
+    return db.execute(stmt).scalar_one_or_none()
 
 
-def get_member_by_code_or_raise(db: Session, member_code: str) -> Member:
-    member = _get_member_by_code(db, member_code)
+def get_member_by_code_or_raise(db: Session, member_code: str, store_id: int | None = None) -> Member:
+    member = _get_member_by_code(db, member_code, store_id=store_id)
     if not member:
         raise MemberNotFoundError("Member not found")
     return member
 
 
-def create_member(db: Session, payload: MemberCreateRequest, actor_user_id: int | None):
+def create_member(
+    db: Session,
+    payload: MemberCreateRequest,
+    actor_user_id: int | None,
+    store_id: int | None,
+):
     member = Member(
+        store_id=store_id,
         member_code=payload.member_code.strip().upper(),
-        full_name=payload.full_name.strip(),
+        full_name=_encrypt_name(payload.full_name.strip()),
         tier=payload.tier.value,
         stored_value_enabled=payload.stored_value_enabled,
     )
@@ -62,11 +84,17 @@ def create_member(db: Session, payload: MemberCreateRequest, actor_user_id: int 
     return to_member_response(db, member)
 
 
-def update_member(db: Session, member_code: str, payload: MemberUpdateRequest, actor_user_id: int | None):
-    member = get_member_by_code_or_raise(db, member_code)
+def update_member(
+    db: Session,
+    member_code: str,
+    payload: MemberUpdateRequest,
+    actor_user_id: int | None,
+    store_id: int | None,
+):
+    member = get_member_by_code_or_raise(db, member_code, store_id=store_id)
 
     if payload.full_name is not None:
-        member.full_name = payload.full_name.strip()
+        member.full_name = _encrypt_name(payload.full_name.strip())
     if payload.tier is not None:
         member.tier = payload.tier.value
     if payload.stored_value_enabled is not None:
@@ -92,8 +120,9 @@ def accrue_points(
     member_code: str,
     payload: PointsAccrualRequest,
     actor_user_id: int | None,
+    store_id: int | None,
 ):
-    member = get_member_by_code_or_raise(db, member_code)
+    member = get_member_by_code_or_raise(db, member_code, store_id=store_id)
     points = calculate_points(payload.pre_tax_amount)
 
     entry = PointsLedger(
@@ -122,8 +151,9 @@ def adjust_points(
     member_code: str,
     payload: PointsAdjustmentRequest,
     actor_user_id: int | None,
+    store_id: int | None,
 ):
-    member = get_member_by_code_or_raise(db, member_code)
+    member = get_member_by_code_or_raise(db, member_code, store_id=store_id)
 
     entry = PointsLedger(
         member_id=member.id,
@@ -183,8 +213,9 @@ def credit_wallet(
     member_code: str,
     payload: WalletMutationRequest,
     actor_user_id: int | None,
+    store_id: int | None,
 ):
-    member = get_member_by_code_or_raise(db, member_code)
+    member = get_member_by_code_or_raise(db, member_code, store_id=store_id)
     wallet = _get_wallet_for_update(db, member.id)
 
     wallet.balance = round_money(Decimal(wallet.balance) + payload.amount)
@@ -215,8 +246,9 @@ def debit_wallet(
     member_code: str,
     payload: WalletMutationRequest,
     actor_user_id: int | None,
+    store_id: int | None,
 ):
-    member = get_member_by_code_or_raise(db, member_code)
+    member = get_member_by_code_or_raise(db, member_code, store_id=store_id)
     wallet = _get_wallet_for_update(db, member.id)
 
     new_balance = round_money(Decimal(wallet.balance) - payload.amount)
@@ -246,11 +278,16 @@ def debit_wallet(
     return to_member_response(db, member), entry
 
 
-def list_members(db: Session, search: str | None = None) -> list[Member]:
+def list_members(db: Session, search: str | None = None, store_id: int | None = None) -> list[Member]:
     stmt = select(Member).order_by(Member.id.desc())
+    if store_id is not None:
+        stmt = stmt.where(Member.store_id == store_id)
     if search:
         raw_search = search.strip()
         code_term = f"%{raw_search.upper()}%"
-        name_term = f"%{raw_search}%"
-        stmt = stmt.where(Member.member_code.ilike(code_term) | Member.full_name.ilike(name_term))
+        if field_encryptor.enabled:
+            stmt = stmt.where(Member.member_code.ilike(code_term))
+        else:
+            name_term = f"%{raw_search}%"
+            stmt = stmt.where(Member.member_code.ilike(code_term) | Member.full_name.ilike(name_term))
     return list(db.execute(stmt).scalars())

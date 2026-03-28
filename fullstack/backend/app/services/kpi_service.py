@@ -80,7 +80,8 @@ def _read_inventory_turnover(db: Session, business_date: date, store_id: int) ->
     outbound_qty = Decimal("0.000")
 
     for row in rows:
-        if store_id != 0 and row.location_id != store_id:
+        row_store_id = row.store_id if row.store_id is not None else row.location_id
+        if store_id != 0 and row_store_id != store_id:
             continue
         qty = Decimal(row.quantity_delta)
         if qty > 0:

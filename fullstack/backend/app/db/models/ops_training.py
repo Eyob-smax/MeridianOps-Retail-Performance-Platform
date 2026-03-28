@@ -23,6 +23,7 @@ class InventoryLocation(Base):
     __tablename__ = "inventory_locations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     code: Mapped[str] = mapped_column(String(40), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -32,6 +33,7 @@ class InventoryDocument(Base):
     __tablename__ = "inventory_documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     doc_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="posted")
     source_location_id: Mapped[int | None] = mapped_column(
@@ -63,6 +65,7 @@ class InventoryLedger(Base):
     __tablename__ = "inventory_ledger"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False, index=True)
     location_id: Mapped[int] = mapped_column(
         ForeignKey("inventory_locations.id", ondelete="RESTRICT"), nullable=False, index=True
@@ -89,6 +92,7 @@ class InventoryReservation(Base):
     __tablename__ = "inventory_reservations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     order_reference: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False, index=True)
     location_id: Mapped[int] = mapped_column(
@@ -107,6 +111,7 @@ class QuizTopic(Base):
     __tablename__ = "quiz_topics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     difficulty: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
@@ -118,6 +123,7 @@ class QuizQuestion(Base):
     __tablename__ = "quiz_questions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     topic_id: Mapped[int] = mapped_column(ForeignKey("quiz_topics.id", ondelete="CASCADE"), nullable=False, index=True)
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
     correct_answer: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -132,6 +138,7 @@ class QuizAssignment(Base):
     __tablename__ = "quiz_assignments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     employee_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     topic_id: Mapped[int] = mapped_column(ForeignKey("quiz_topics.id", ondelete="CASCADE"), nullable=False, index=True)
     assigned_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -143,6 +150,7 @@ class SpacedRepetitionState(Base):
     __tablename__ = "spaced_repetition_state"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     employee_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     topic_id: Mapped[int] = mapped_column(ForeignKey("quiz_topics.id", ondelete="CASCADE"), nullable=False, index=True)
     next_review_date: Mapped[datetime] = mapped_column(Date, nullable=False, index=True)
@@ -158,6 +166,7 @@ class QuizAttempt(Base):
     __tablename__ = "quiz_attempts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     employee_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     topic_id: Mapped[int] = mapped_column(ForeignKey("quiz_topics.id", ondelete="CASCADE"), nullable=False, index=True)
     question_id: Mapped[int] = mapped_column(ForeignKey("quiz_questions.id", ondelete="CASCADE"), nullable=False)
@@ -170,6 +179,7 @@ class ReviewQueueSnapshot(Base):
     __tablename__ = "review_queue_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     employee_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     topic_id: Mapped[int] = mapped_column(ForeignKey("quiz_topics.id", ondelete="CASCADE"), nullable=False)
     due_date: Mapped[datetime] = mapped_column(Date, nullable=False)

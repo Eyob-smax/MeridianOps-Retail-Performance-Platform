@@ -135,7 +135,7 @@ async function loadCampaigns() {
       issueCampaignId.value = campaigns.value[0].id;
     }
   } catch (error) {
-    errorMessage.value = extractError(error);
+    errorMessage.value = notifyError(error, "Failed to load campaigns.");
   }
 }
 

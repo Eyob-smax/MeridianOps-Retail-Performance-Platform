@@ -1,5 +1,35 @@
-# Vue 3 + TypeScript + Vite
+# MeridianOps Frontend (Vue 3 + TypeScript + Vite)
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Single-page UI for campaign operations, loyalty/member workflows, training, inventory, attendance, and analytics dashboards.
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+## Runtime Policy
+
+Frontend runtime and tests are Docker-only for this project.
+
+Do not run `npm install`, `npm run dev`, `npm run test`, or `npm run build` directly on the host for project acceptance.
+
+## Start Full Stack (Docker)
+
+```bash
+docker compose -f fullstack/docker-compose.yml up --build -d
+```
+
+## Run Frontend Tests (Docker)
+
+```bash
+docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
+```
+
+## Run Full Test Sequence (Docker)
+
+```bash
+docker compose -f fullstack/docker-compose.yml --profile test run --rm backend-tests && docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
+```
+
+## Stop Stack
+
+```bash
+docker compose -f fullstack/docker-compose.yml down
+```
+
+For complete project workflow details, use the main guide in `fullstack/README.md`.

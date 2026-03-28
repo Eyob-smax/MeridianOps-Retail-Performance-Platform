@@ -35,10 +35,10 @@ _SUPERVISOR_ROLES = {"administrator", "store_manager"}
 
 @router.get("/topics", response_model=list[TopicResponse])
 def training_topics(
-    _: AuthUser = Depends(require_roles(_SUPERVISOR_ROLES | {"employee"})),
+    current_user: AuthUser = Depends(require_roles(_SUPERVISOR_ROLES | {"employee"})),
     db: Session = Depends(get_db),
 ) -> list[TopicResponse]:
-    return list_topics(db)
+    return list_topics(db, store_id=current_user.store_id)
 
 
 @router.post("/topics", response_model=TopicResponse)
@@ -116,16 +116,16 @@ def training_submit_attempt(
 
 @router.get("/stats", response_model=list[TopicStatsResponse])
 def training_stats(
-    _: AuthUser = Depends(require_roles(_SUPERVISOR_ROLES)),
+    current_user: AuthUser = Depends(require_roles(_SUPERVISOR_ROLES)),
     db: Session = Depends(get_db),
 ) -> list[TopicStatsResponse]:
-    return topic_stats(db)
+    return topic_stats(db, store_id=current_user.store_id)
 
 
 @router.get("/trends", response_model=list[TrainingTrendPoint])
 def training_trends(
     days: int = Query(default=14, ge=1, le=90),
-    _: AuthUser = Depends(require_roles(_SUPERVISOR_ROLES)),
+    current_user: AuthUser = Depends(require_roles(_SUPERVISOR_ROLES)),
     db: Session = Depends(get_db),
 ) -> list[TrainingTrendPoint]:
-    return trend_points(db, days=days)
+    return trend_points(db, days=days, store_id=current_user.store_id)

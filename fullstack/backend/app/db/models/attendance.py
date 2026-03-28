@@ -14,6 +14,7 @@ class AttendanceRuleConfig(Base):
     tolerance_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     auto_break_after_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
     auto_break_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    cross_day_shift_cutoff_hour: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
     late_early_penalty_hours: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, default=Decimal("0.25"))
     updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -39,18 +40,32 @@ class RotatingQRToken(Base):
     token: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class NfcBadge(Base):
+    __tablename__ = "nfc_badges"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_nfc_badges_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    tag_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class AttendanceShift(Base):
     __tablename__ = "attendance_shifts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     device_binding_id: Mapped[int | None] = mapped_column(
         ForeignKey("device_bindings.id", ondelete="SET NULL"), nullable=True
     )
     qr_token_id: Mapped[int | None] = mapped_column(ForeignKey("rotating_qr_tokens.id", ondelete="SET NULL"), nullable=True)
+    nfc_badge_id: Mapped[int | None] = mapped_column(ForeignKey("nfc_badges.id", ondelete="SET NULL"), nullable=True)
     check_in_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     check_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     check_in_latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
@@ -67,6 +82,7 @@ class AttendanceDailyResult(Base):
     __table_args__ = (UniqueConstraint("user_id", "business_date", name="uq_attendance_daily_user_date"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     shift_id: Mapped[int] = mapped_column(ForeignKey("attendance_shifts.id", ondelete="CASCADE"), nullable=False)
     business_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
@@ -82,6 +98,7 @@ class AttendanceMakeupRequest(Base):
     __tablename__ = "attendance_makeup_requests"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)

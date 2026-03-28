@@ -1,0 +1,39 @@
+{
+  "summary": "Closed acceptance gaps by enforcing mandatory PostgreSQL locking checks in test flow, exposing missing attendance/inventory optional inputs in UI payloads, and improving frontend visual hierarchy/polish.",
+  "fixes": [
+    {
+      "area": "PostgreSQL locking semantics in default verification path",
+      "details": [
+        "Updated dockerized test runner to execute backend fast suite first, then a mandatory PostgreSQL locking suite for concurrency/idempotency scenarios.",
+        "Added explicit POSTGRES_TEST_DATABASE_URL injection for the PostgreSQL locking test stage.",
+        "Changed backend test harness DB env setup from unconditional override to setdefault so explicit PostgreSQL URL can be honored when provided."
+      ],
+      "files": ["fullstack/run-tests.sh", "fullstack/backend/tests/conftest.py"]
+    },
+    {
+      "area": "Attendance and inventory prompt-level UI completeness",
+      "details": [
+        "Added optional attendance inputs for nfc_tag, latitude, and longitude in both check-in and check-out forms.",
+        "Wired new attendance fields into API payloads with optional pass-through semantics.",
+        "Added optional expiry_date input to inventory receiving form and passed it through in receiving line payload."
+      ],
+      "files": [
+        "fullstack/frontend/src/views/app/AttendanceView.vue",
+        "fullstack/frontend/src/views/app/InventoryReceivingView.vue"
+      ]
+    },
+    {
+      "area": "UI hierarchy and product polish",
+      "details": [
+        "Refined global design tokens and typography with stronger color hierarchy and layered page background.",
+        "Improved top-nav, side-nav, card/panel depth, buttons, and table affordances to better fit enterprise retail cockpit expectations.",
+        "Added subtle panel entry animation plus reduced-motion fallback for accessibility-conscious motion behavior."
+      ],
+      "files": ["fullstack/frontend/src/style.css"]
+    }
+  ],
+  "validation": {
+    "static_checks": "No diagnostics reported by get_errors for all modified files.",
+    "runtime_tests": "Not executed in this logging step. Use fullstack/run-tests.sh to verify Dockerized backend+PostgreSQL locking+frontend suites."
+  }
+}

@@ -1,8 +1,30 @@
 ﻿from datetime import date, datetime, timedelta, timezone
 from threading import Event, Thread
 
+from sqlalchemy import select
+
+from app.db.models import InventoryLocation, User
 from app.db.session import session_scope
 from app.services.kpi_service import run_kpi_materialization
+
+
+def resolve_kpi_store_ids(db, include_global: bool = True) -> list[int]:
+    store_ids: set[int] = set()
+
+    location_store_ids = db.execute(
+        select(InventoryLocation.store_id).where(InventoryLocation.store_id.is_not(None)).distinct()
+    ).scalars()
+    user_store_ids = db.execute(select(User.store_id).where(User.store_id.is_not(None)).distinct()).scalars()
+
+    for candidate in list(location_store_ids) + list(user_store_ids):
+        if candidate is None:
+            continue
+        store_ids.add(int(candidate))
+
+    scoped_store_ids = sorted(store_ids)
+    if include_global:
+        return [0, *scoped_store_ids]
+    return scoped_store_ids
 
 
 class NightlyScheduler:
@@ -40,13 +62,14 @@ class NightlyScheduler:
             target_date = (self.next_run_at - timedelta(days=1)).date()
             try:
                 with session_scope() as db:
+                    scoped_store_ids = resolve_kpi_store_ids(db)
                     run_kpi_materialization(
                         db,
                         start_date=target_date,
                         end_date=target_date,
                         trigger_type="scheduled",
                         actor_user_id=None,
-                        store_ids=[0, 101, 102, 103],
+                        store_ids=scoped_store_ids,
                         scheduled_for=self.next_run_at,
                     )
             except Exception:
@@ -80,4 +103,6 @@ def run_backfill_range(
 
 
 def run_manual_once(target_date: date, actor_user_id: int | None = None):
-    return run_backfill_range(target_date, target_date, actor_user_id=actor_user_id, store_ids=[0, 101, 102, 103])
+    with session_scope() as db:
+        scoped_store_ids = resolve_kpi_store_ids(db)
+    return run_backfill_range(target_date, target_date, actor_user_id=actor_user_id, store_ids=scoped_store_ids)

@@ -18,6 +18,7 @@ import InventoryCountsView from "@/views/app/InventoryCountsView.vue";
 import InventoryReceivingView from "@/views/app/InventoryReceivingView.vue";
 import InventoryTransfersView from "@/views/app/InventoryTransfersView.vue";
 import MembersView from "@/views/app/MembersView.vue";
+import SharedDashboardView from "@/views/shared/SharedDashboardView.vue";
 import TrainingReviewView from "@/views/app/TrainingReviewView.vue";
 import TrainingView from "@/views/app/TrainingView.vue";
 import HealthView from "@/views/system/HealthView.vue";
@@ -39,6 +40,11 @@ const router = createRouter({
       name: "login",
       component: LoginView,
       meta: { requiresGuest: true },
+    },
+    {
+      path: "/shared/:token",
+      name: "shared-dashboard",
+      component: SharedDashboardView,
     },
     {
       path: "/app",

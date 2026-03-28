@@ -23,6 +23,7 @@
         <input v-model.number="rules.tolerance_minutes" type="number" min="0" max="120" />
         <input v-model.number="rules.auto_break_after_hours" type="number" min="1" max="24" />
         <input v-model.number="rules.auto_break_minutes" type="number" min="0" max="180" />
+        <input v-model.number="rules.cross_day_shift_cutoff_hour" type="number" min="0" max="23" />
         <input v-model="rules.late_early_penalty_hours" />
       </div>
       <button class="btn" @click="onSaveRules">Save Rule Config</button>

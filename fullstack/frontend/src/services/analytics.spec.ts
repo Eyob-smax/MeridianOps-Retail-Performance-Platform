@@ -11,8 +11,12 @@ import { apiClient } from "@/services/api";
 import {
   createDashboard,
   createDashboardShareLink,
+  exportDashboardFile,
   exportDashboardMetadata,
+  getDashboardDateDrilldown,
   getDashboard,
+  getDashboardStoreDrilldown,
+  getSharedDashboard,
   listDashboards,
 } from "@/services/analytics";
 
@@ -128,5 +132,84 @@ describe("analytics service", () => {
 
     expect(share.dashboard_id).toBe(9);
     expect(metadata.content_type).toBe("text/csv");
+  });
+
+  it("loads a shared dashboard payload", async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: {
+        dashboard_id: 9,
+        token: "abc",
+        name: "Regional",
+        description: "Read only",
+        widgets: [],
+        allowed_store_ids: [101],
+        store_options: [{ id: 101, name: "Downtown" }],
+        read_only: true,
+        created_at: "",
+        updated_at: "",
+        data: {
+          filters: { store_ids: [101], start_date: "2026-03-20", end_date: "2026-03-27" },
+          totals: {
+            orders: 5,
+            revenue: "50.00",
+            refunds: "0.00",
+            cost: "20.00",
+            gross_margin: "30.00",
+          },
+          by_store: [],
+          rows: [],
+        },
+      },
+    });
+
+    const shared = await getSharedDashboard("abc");
+
+    expect(apiClient.get).toHaveBeenCalledWith("/analytics/shared/abc");
+    expect(shared.read_only).toBe(true);
+    expect(shared.dashboard_id).toBe(9);
+  });
+
+  it("downloads export files and requests drilldown endpoints", async () => {
+    const blob = new Blob(["csv-data"], { type: "text/csv" });
+    vi.mocked(apiClient.get)
+      .mockResolvedValueOnce({
+        data: blob,
+        headers: { "content-disposition": 'attachment; filename="ops.csv"' },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          dashboard_id: 3,
+          store_id: 101,
+          store_name: "Downtown",
+          start_date: "2026-03-01",
+          end_date: "2026-03-31",
+          orders: 15,
+          revenue: "1200.00",
+          refunds: "0.00",
+          cost: "700.00",
+          gross_margin: "500.00",
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          dashboard_id: 3,
+          business_date: "2026-03-20",
+          start_date: "2026-03-20",
+          end_date: "2026-03-20",
+          orders: 5,
+          revenue: "400.00",
+          refunds: "0.00",
+          cost: "220.00",
+          gross_margin: "180.00",
+        },
+      });
+
+    const exported = await exportDashboardFile(3, "csv");
+    const storeDrill = await getDashboardStoreDrilldown(3, 101);
+    const dateDrill = await getDashboardDateDrilldown(3, "2026-03-20");
+
+    expect(exported.filename).toBe("ops.csv");
+    expect(storeDrill.store_id).toBe(101);
+    expect(dateDrill.business_date).toBe("2026-03-20");
   });
 });

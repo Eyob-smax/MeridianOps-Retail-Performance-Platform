@@ -2,7 +2,7 @@
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
+    model_config = SettingsConfigDict(case_sensitive=False)
 
     app_name: str = "MeridianOps Retail Performance API"
     app_env: str = "local"
@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     auth_max_failed_attempts: int = 5
     auth_lockout_minutes: int = 15
     auth_session_minutes: int = 720
+    auth_enable_seed_bootstrap: bool = False
+    auth_bootstrap_password: str | None = None
     field_encryption_key: str | None = None
     scheduler_enabled: bool = True
     scheduler_kpi_hour_utc: int = 2

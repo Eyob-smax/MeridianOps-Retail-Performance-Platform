@@ -25,6 +25,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> AuthUse
     user, roles = payload
     return AuthUser(
         id=user.id,
+        store_id=user.store_id,
         username=user.username,
         display_name=user.display_name,
         roles=roles,

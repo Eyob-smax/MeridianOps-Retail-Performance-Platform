@@ -11,6 +11,7 @@ class Campaign(Base):
     __tablename__ = "campaigns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     campaign_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     percent_off: Mapped[Decimal | None] = mapped_column(Numeric(7, 4), nullable=True)
@@ -30,6 +31,7 @@ class Coupon(Base):
     __tablename__ = "coupons"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
     coupon_code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     issuance_method: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -48,6 +50,7 @@ class CouponIssuanceEvent(Base):
     __tablename__ = "coupon_issuance_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     coupon_id: Mapped[int] = mapped_column(ForeignKey("coupons.id", ondelete="CASCADE"), nullable=False, index=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
     member_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
@@ -61,6 +64,7 @@ class CouponRedemptionEvent(Base):
     __tablename__ = "coupon_redemption_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     coupon_id: Mapped[int | None] = mapped_column(ForeignKey("coupons.id", ondelete="SET NULL"), nullable=True, index=True)
     campaign_id: Mapped[int | None] = mapped_column(
         ForeignKey("campaigns.id", ondelete="SET NULL"), nullable=True, index=True

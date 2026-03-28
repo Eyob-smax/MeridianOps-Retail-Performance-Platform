@@ -1,13 +1,14 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AttendanceRuleResponse(BaseModel):
     tolerance_minutes: int
     auto_break_after_hours: int
     auto_break_minutes: int
+    cross_day_shift_cutoff_hour: int
     late_early_penalty_hours: str
 
 
@@ -15,6 +16,7 @@ class AttendanceRuleUpdateRequest(BaseModel):
     tolerance_minutes: int = Field(ge=0, le=120)
     auto_break_after_hours: int = Field(ge=1, le=24)
     auto_break_minutes: int = Field(ge=0, le=180)
+    cross_day_shift_cutoff_hour: int = Field(ge=0, le=23)
     late_early_penalty_hours: Decimal = Field(ge=Decimal("0"), le=Decimal("8"))
 
 
@@ -25,20 +27,34 @@ class RotatingQRTokenResponse(BaseModel):
 
 class CheckInRequest(BaseModel):
     device_id: str = Field(min_length=2, max_length=120)
-    qr_token: str = Field(min_length=10, max_length=120)
+    qr_token: str | None = Field(default=None, min_length=10, max_length=120)
+    nfc_tag: str | None = Field(default=None, min_length=6, max_length=120)
     check_in_at: datetime | None = None
     scheduled_start_at: datetime | None = None
     scheduled_end_at: datetime | None = None
     latitude: Decimal | None = None
     longitude: Decimal | None = None
 
+    @model_validator(mode="after")
+    def validate_auth_factors(self):
+        if not self.qr_token and not self.nfc_tag:
+            raise ValueError("Either qr_token or nfc_tag is required")
+        return self
+
 
 class CheckOutRequest(BaseModel):
     device_id: str = Field(min_length=2, max_length=120)
-    qr_token: str = Field(min_length=10, max_length=120)
+    qr_token: str | None = Field(default=None, min_length=10, max_length=120)
+    nfc_tag: str | None = Field(default=None, min_length=6, max_length=120)
     check_out_at: datetime | None = None
     latitude: Decimal | None = None
     longitude: Decimal | None = None
+
+    @model_validator(mode="after")
+    def validate_auth_factors(self):
+        if not self.qr_token and not self.nfc_tag:
+            raise ValueError("Either qr_token or nfc_tag is required")
+        return self
 
 
 class AttendanceShiftResponse(BaseModel):

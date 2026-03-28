@@ -11,6 +11,7 @@ class Member(Base):
     __tablename__ = "members"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     member_code: Mapped[str] = mapped_column(String(40), nullable=False, unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     tier: Mapped[str] = mapped_column(String(20), nullable=False, default="base", index=True)

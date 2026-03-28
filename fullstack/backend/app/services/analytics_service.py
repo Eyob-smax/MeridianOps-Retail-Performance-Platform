@@ -13,7 +13,7 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import AuditLog, DashboardLayout, DashboardShareLink
+from app.db.models import AuditLog, DashboardLayout, DashboardShareLink, KPIDailyMetric
 from app.schemas.analytics import (
     DashboardCreateRequest,
     DashboardDataPayload,
@@ -106,7 +106,9 @@ def _scope_for_role(current_user: AuthUser) -> list[int]:
     if "administrator" in current_user.roles:
         return _default_store_ids()
     if "store_manager" in current_user.roles:
-        return [101, 102, 103]
+        if current_user.store_id is None:
+            raise DashboardPermissionError("Store manager has no assigned store scope")
+        return [current_user.store_id]
     raise DashboardPermissionError("Insufficient permissions")
 
 
@@ -129,34 +131,37 @@ def _resolve_window(
     return start_date, end_date
 
 
-def _metric_seed(store_id: int, business_date: date) -> int:
-    return (store_id * 97) + business_date.toordinal()
+def _build_rows(db: Session, store_ids: list[int], start_date: date, end_date: date) -> list[DashboardDataRow]:
+    stmt = (
+        select(KPIDailyMetric)
+        .where(
+            KPIDailyMetric.business_date >= start_date,
+            KPIDailyMetric.business_date <= end_date,
+            KPIDailyMetric.store_id.in_(store_ids),
+        )
+        .order_by(KPIDailyMetric.business_date.asc(), KPIDailyMetric.store_id.asc())
+    )
+    metrics = db.execute(stmt).scalars().all()
 
-
-def _build_rows(store_ids: list[int], start_date: date, end_date: date) -> list[DashboardDataRow]:
     rows: list[DashboardDataRow] = []
-    current = start_date
-    while current <= end_date:
-        for store_id in store_ids:
-            seed = _metric_seed(store_id, current)
-            orders = 25 + (seed % 32)
-            revenue = Decimal(orders * (18 + (seed % 7))) + Decimal((seed % 100) / 100)
-            refunds = (revenue * Decimal("0.03")).quantize(Decimal("0.01"))
-            cost = (revenue * Decimal("0.58")).quantize(Decimal("0.01"))
-            gross_margin = (revenue - refunds - cost).quantize(Decimal("0.01"))
-            rows.append(
-                DashboardDataRow(
-                    store_id=store_id,
-                    store_name=STORE_NAMES.get(store_id, f"Store {store_id}"),
-                    business_date=current,
-                    orders=orders,
-                    revenue=revenue.quantize(Decimal("0.01")),
-                    refunds=refunds,
-                    cost=cost,
-                    gross_margin=gross_margin,
-                )
+    for metric in metrics:
+        revenue = Decimal(metric.revenue_total or 0).quantize(Decimal("0.01"))
+        orders = int(metric.successful_orders or 0)
+        refunds = Decimal("0.00")
+        cost = Decimal("0.00")
+        gross_margin = revenue
+        rows.append(
+            DashboardDataRow(
+                store_id=metric.store_id,
+                store_name=STORE_NAMES.get(metric.store_id, f"Store {metric.store_id}"),
+                business_date=metric.business_date,
+                orders=orders,
+                revenue=revenue,
+                refunds=refunds,
+                cost=cost,
+                gross_margin=gross_margin,
             )
-        current += timedelta(days=1)
+        )
     return rows
 
 
@@ -229,8 +234,8 @@ def _aggregate(
     return totals, by_store_rows, by_date_rows
 
 
-def _build_data_payload(store_ids: list[int], start_date: date, end_date: date) -> DashboardDataPayload:
-    rows = _build_rows(store_ids, start_date, end_date)
+def _build_data_payload(db: Session, store_ids: list[int], start_date: date, end_date: date) -> DashboardDataPayload:
+    rows = _build_rows(db, store_ids, start_date, end_date)
     totals, by_store_rows, by_date_rows = _aggregate(rows)
     return DashboardDataPayload(
         filters=DashboardFilters(store_ids=store_ids, start_date=start_date, end_date=end_date),
@@ -451,7 +456,7 @@ def get_dashboard_detail(
         default_start=layout.default_start_date,
         default_end=layout.default_end_date,
     )
-    data = _build_data_payload(scoped_store_ids, resolved_start, resolved_end)
+    data = _build_data_payload(db, scoped_store_ids, resolved_start, resolved_end)
 
     return DashboardDetailResponse(
         id=layout.id,
@@ -635,7 +640,7 @@ def resolve_shared_dashboard(
         default_start=link.start_date or layout.default_start_date,
         default_end=link.end_date or layout.default_end_date,
     )
-    data = _build_data_payload(scoped_store_ids, resolved_start, resolved_end)
+    data = _build_data_payload(db, scoped_store_ids, resolved_start, resolved_end)
 
     audit_event(
         db,
@@ -822,8 +827,10 @@ def record_export_audit(
 
 
 def get_dashboard_audit_rows(db: Session, dashboard_id: int, current_user: AuthUser) -> list[AuditLog]:
-    _scope_for_role(current_user)
-    _get_dashboard_or_raise(db, dashboard_id)
+    actor_scope = _scope_for_role(current_user)
+    layout = _get_dashboard_or_raise(db, dashboard_id)
+    if not _dashboard_actor_visibility(layout, actor_scope):
+        raise DashboardPermissionError("No permissions for this dashboard")
 
     share_link_ids = [
         str(link_id)

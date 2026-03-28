@@ -14,7 +14,7 @@ if "app" not in signature(httpx.Client.__init__).parameters:
     httpx.Client.__init__ = _patched_client_init  # type: ignore[assignment]
 
 
-os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,6 +25,7 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.services.auth_service import ensure_seed_users
 
 # Ensure SQLAlchemy metadata has all mapped classes before create_all.
 from app.db import models as _models  # noqa: F401
@@ -51,6 +52,11 @@ def db_session_factory(db_engine):
 
 @pytest.fixture
 def client(db_session_factory) -> TestClient:
+    seed_db = db_session_factory()
+    ensure_seed_users(seed_db, password="ChangeMeNow123")
+    seed_db.commit()
+    seed_db.close()
+
     def override_get_db():
         db = db_session_factory()
         try:

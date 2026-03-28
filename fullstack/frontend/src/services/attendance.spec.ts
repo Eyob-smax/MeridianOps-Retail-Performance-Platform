@@ -28,6 +28,7 @@ describe("attendance service", () => {
         tolerance_minutes: 5,
         auto_break_after_hours: 6,
         auto_break_minutes: 30,
+        cross_day_shift_cutoff_hour: 6,
         late_early_penalty_hours: "0.25",
       },
     });
@@ -89,5 +90,57 @@ describe("attendance service", () => {
 
     const checkOut = await attendanceCheckOut({ device_id: "DEV-1", qr_token: "qr_abc" });
     expect(checkOut.daily_result.worked_hours).toBe("7.50");
+  });
+
+  it("submits nfc checkin checkout", async () => {
+    vi.mocked(apiClient.post)
+      .mockResolvedValueOnce({
+        data: {
+          id: 10,
+          user_id: 1,
+          check_in_at: "2026-03-27T09:00:00Z",
+          check_out_at: null,
+          status: "open",
+          scheduled_start_at: null,
+          scheduled_end_at: null,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          shift: {
+            id: 10,
+            user_id: 1,
+            check_in_at: "2026-03-27T09:00:00Z",
+            check_out_at: "2026-03-27T12:00:00Z",
+            status: "closed",
+            scheduled_start_at: null,
+            scheduled_end_at: null,
+          },
+          daily_result: {
+            id: 20,
+            user_id: 1,
+            business_date: "2026-03-27",
+            worked_hours: "3.00",
+            auto_break_minutes: 0,
+            late_incidents: 0,
+            early_incidents: 0,
+            penalty_hours: "0.00",
+          },
+        },
+      });
+
+    const checkIn = await attendanceCheckIn({ device_id: "DEV-2", nfc_tag: "NFC-1" });
+    expect(checkIn.status).toBe("open");
+    expect(apiClient.post).toHaveBeenCalledWith("/attendance/check-in", {
+      device_id: "DEV-2",
+      nfc_tag: "NFC-1",
+    });
+
+    const checkOut = await attendanceCheckOut({ device_id: "DEV-2", nfc_tag: "NFC-1" });
+    expect(checkOut.shift.status).toBe("closed");
+    expect(apiClient.post).toHaveBeenCalledWith("/attendance/check-out", {
+      device_id: "DEV-2",
+      nfc_tag: "NFC-1",
+    });
   });
 });

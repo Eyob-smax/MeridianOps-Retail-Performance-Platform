@@ -1,10 +1,10 @@
 ﻿from datetime import date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps.auth import get_current_user, require_roles
-from app.core.errors import bad_request
+from app.core.errors import bad_request, forbidden
 from app.db.session import get_db
 from app.schemas.auth import AuthUser
 from app.schemas.kpi import (
@@ -16,13 +16,28 @@ from app.schemas.kpi import (
     SeedDataResponse,
 )
 from app.services.kpi_service import build_scheduler_status, list_kpi_metrics, list_kpi_runs, run_kpi_materialization
-from app.services.scheduler_service import NightlyScheduler
+from app.services.scheduler_service import NightlyScheduler, resolve_kpi_store_ids
 from app.services.seed_service import seed_demo_data
 
 router = APIRouter(prefix="/ops", tags=["operations"])
 
 _ADMIN_MANAGER_ROLES = {"administrator", "store_manager"}
 _scheduler: NightlyScheduler | None = None
+
+
+def _scoped_store_ids(current_user: AuthUser, requested_store_ids: list[int] | None, db: Session) -> list[int]:
+    if "administrator" in current_user.roles:
+        return requested_store_ids if requested_store_ids else resolve_kpi_store_ids(db)
+    if "store_manager" in current_user.roles:
+        if current_user.store_id is None:
+            raise forbidden("Store manager has no assigned store scope")
+        if requested_store_ids:
+            invalid = [store_id for store_id in requested_store_ids if store_id != current_user.store_id]
+            if invalid:
+                raise forbidden("Store manager cannot access other stores")
+            return [current_user.store_id]
+        return [current_user.store_id]
+    raise forbidden()
 
 
 def register_scheduler(scheduler: NightlyScheduler) -> None:
@@ -73,13 +88,14 @@ def kpi_backfill(
     db: Session = Depends(get_db),
 ) -> KPIBackfillResponse:
     try:
+        scoped_store_ids = _scoped_store_ids(current_user, payload.store_ids if payload.store_ids else None, db)
         run = run_kpi_materialization(
             db,
             start_date=payload.start_date,
             end_date=payload.end_date,
             trigger_type="manual",
             actor_user_id=current_user.id,
-            store_ids=payload.store_ids if payload.store_ids else [0, 101, 102, 103],
+            store_ids=scoped_store_ids,
         )
         db.commit()
         return KPIBackfillResponse(
@@ -91,6 +107,8 @@ def kpi_backfill(
         )
     except Exception as exc:  # noqa: BLE001
         db.rollback()
+        if isinstance(exc, HTTPException):
+            raise exc
         raise bad_request(str(exc))
 
 
@@ -126,13 +144,21 @@ def kpi_metrics(
     start_date: date = Query(...),
     end_date: date = Query(...),
     store_id: int | None = Query(default=None),
+    current_user: AuthUser = Depends(get_current_user),
     _: AuthUser = Depends(require_roles(_ADMIN_MANAGER_ROLES)),
     db: Session = Depends(get_db),
 ) -> list[KPIDailyMetricResponse]:
     if end_date < start_date:
         raise bad_request("end_date must be on or after start_date")
 
-    metrics = list_kpi_metrics(db, start_date, end_date, store_id=store_id)
+    scoped_store_ids = _scoped_store_ids(current_user, [store_id] if store_id is not None else None, db)
+    if "administrator" in current_user.roles:
+        metrics = list_kpi_metrics(db, start_date, end_date, store_id=store_id)
+    else:
+        metrics = []
+        for scoped_store_id in scoped_store_ids:
+            metrics.extend(list_kpi_metrics(db, start_date, end_date, store_id=scoped_store_id))
+        metrics.sort(key=lambda item: (item.business_date, item.store_id))
     return [
         KPIDailyMetricResponse(
             id=metric.id,

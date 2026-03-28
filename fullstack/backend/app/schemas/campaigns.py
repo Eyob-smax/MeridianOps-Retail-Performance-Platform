@@ -32,6 +32,7 @@ class CampaignUpdateRequest(BaseModel):
 
 class CampaignResponse(BaseModel):
     id: int
+    store_id: int | None
     name: str
     campaign_type: CampaignType
     effective_start: date

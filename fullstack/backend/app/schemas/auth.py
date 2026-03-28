@@ -10,6 +10,7 @@ class LoginRequest(BaseModel):
 
 class AuthUser(BaseModel):
     id: int
+    store_id: int | None = None
     username: str
     display_name: str
     roles: list[UserRole]

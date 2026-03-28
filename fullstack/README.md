@@ -1,37 +1,5 @@
 # MeridianOps Docker Workflow
 
-## Local (Non-Docker) Quick Start
-
-Backend (Python 3.12+):
-
-```bash
-cd fullstack/backend
-python -m venv .venv
-source .venv/Scripts/activate
-python -m pip install -U pip
-python -m pip install -e .[dev]
-```
-
-Run backend tests locally:
-
-```bash
-cd fullstack/backend
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q
-```
-
-Frontend:
-
-```bash
-cd fullstack/frontend
-npm install
-npm test -- --pool=forks
-```
-
-Notes:
-
-- `--pool=forks` avoids worker-thread startup issues seen on some local environments.
-- Non-Docker local tests do not require changing application source code.
-
 ## Start Backend + Frontend + Database
 
 ```bash
@@ -57,8 +25,20 @@ Important: do not use `up --abort-on-container-exit` for sequential tests. That 
 What this does:
 
 - Runs backend tests first and stops on failure.
+- The backend test container also executes the PostgreSQL locking/concurrency suite by default through `POSTGRES_TEST_DATABASE_URL`.
 - Runs frontend tests only if backend tests pass.
 - Returns non-zero exit code on failure.
+
+## Docker-Only Policy
+
+This project must be started, tested, and validated using Docker Compose only.
+
+Do not run backend or frontend directly on the host machine for acceptance/runtime verification.
+
+Notes:
+
+- Backend PostgreSQL locking tests are skipped only when `POSTGRES_TEST_DATABASE_URL` is not configured.
+- In the Docker test profile, `POSTGRES_TEST_DATABASE_URL` is preconfigured in Compose to execute PostgreSQL locking tests in `backend-tests`.
 
 ## Run Individual Test Suites In Docker
 
@@ -72,20 +52,6 @@ Frontend only:
 
 ```bash
 docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
-```
-
-## One-Command Test Runners
-
-From project root:
-
-```bash
-bash fullstack/run-tests.sh
-```
-
-PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File fullstack/run-tests.ps1
 ```
 
 ## Full Production Validation Flow

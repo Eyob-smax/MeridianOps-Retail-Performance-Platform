@@ -25,8 +25,18 @@ RUN useradd --create-home --shell /bin/bash appuser \
 USER appuser
 
 FROM base AS runtime
+ENV APP_ENV=docker \
+    DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/meridianops \
+    BACKEND_CORS_ORIGINS=http://localhost:5173 \
+    SCHEDULER_ENABLED=false \
+    SCHEDULER_START_ON_BOOT=false
 EXPOSE 8000
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
 FROM base AS test
+ENV APP_ENV=test \
+    DATABASE_URL=sqlite+pysqlite:///:memory: \
+    POSTGRES_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@db:5432/meridianops \
+    SCHEDULER_ENABLED=false \
+    SCHEDULER_START_ON_BOOT=false
 CMD ["python", "-m", "pytest"]

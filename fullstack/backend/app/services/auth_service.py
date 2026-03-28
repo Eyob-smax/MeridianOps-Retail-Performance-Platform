@@ -17,14 +17,13 @@ from app.core.security import (
 from app.db.models import AuthAttempt, LockoutWindow, User, UserRole, UserSession
 from app.utils.datetime import to_utc
 
-DEFAULT_LOCAL_USERS: tuple[tuple[str, str, str], ...] = (
-    ("admin", "Local Administrator", "administrator"),
-    ("manager", "Store Manager", "store_manager"),
-    ("clerk", "Inventory Clerk", "inventory_clerk"),
-    ("cashier", "Cashier", "cashier"),
-    ("employee", "Employee", "employee"),
+DEFAULT_LOCAL_USERS: tuple[tuple[str, str, str, int | None], ...] = (
+    ("admin", "Local Administrator", "administrator", None),
+    ("manager", "Store Manager", "store_manager", 101),
+    ("clerk", "Inventory Clerk", "inventory_clerk", 101),
+    ("cashier", "Cashier", "cashier", 101),
+    ("employee", "Employee", "employee", 101),
 )
-DEFAULT_PASSWORD = "ChangeMeNow123"
 
 
 def _normalize_username(username: str) -> str:
@@ -82,6 +81,7 @@ def create_user(
     password: str,
     display_name: str,
     roles: list[str],
+    store_id: int | None = None,
 ) -> User:
     normalized = _normalize_username(username)
     if not password_is_valid(password):
@@ -100,6 +100,7 @@ def create_user(
         username=normalized,
         password_hash=hash_password(password),
         display_name=display_name,
+        store_id=store_id,
         is_active=True,
     )
     db.add(user)
@@ -111,18 +112,34 @@ def create_user(
     return user
 
 
-def ensure_seed_users(db: Session) -> None:
-    for username, display_name, role in DEFAULT_LOCAL_USERS:
+def ensure_seed_users(db: Session, *, password: str) -> None:
+    if not password_is_valid(password):
+        raise ValueError(f"Password must be at least {settings.auth_min_password_length} characters.")
+
+    for username, display_name, role, store_id in DEFAULT_LOCAL_USERS:
         existing = db.execute(select(User).where(User.username == username)).scalar_one_or_none()
         if existing:
             continue
         create_user(
             db=db,
             username=username,
-            password=DEFAULT_PASSWORD,
+            password=password,
             display_name=display_name,
             roles=[role],
+            store_id=store_id,
         )
+
+
+def resolve_bootstrap_password() -> str:
+    if not settings.auth_enable_seed_bootstrap:
+        raise ValueError("Seed bootstrap is disabled. Set AUTH_ENABLE_SEED_BOOTSTRAP=true to enable it.")
+
+    password = (settings.auth_bootstrap_password or "").strip()
+    if not password:
+        raise ValueError("AUTH_BOOTSTRAP_PASSWORD must be set when bootstrap is enabled.")
+    if not password_is_valid(password):
+        raise ValueError(f"AUTH_BOOTSTRAP_PASSWORD must be at least {settings.auth_min_password_length} characters.")
+    return password
 
 
 def authenticate_user(db: Session, username: str, password: str) -> tuple[User | None, str | None, str | None]:

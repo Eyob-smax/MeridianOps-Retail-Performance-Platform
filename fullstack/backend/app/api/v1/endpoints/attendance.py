@@ -161,11 +161,11 @@ def attendance_makeup_approve(
 def attendance_payroll_export(
     start_date: date = Query(...),
     end_date: date = Query(...),
-    _: AuthUser = Depends(require_roles(_MANAGER_ROLES)),
+    current_user: AuthUser = Depends(require_roles(_MANAGER_ROLES)),
     db: Session = Depends(get_db),
 ) -> Response:
     try:
-        rows = payroll_export_rows(db, start_date, end_date)
+        rows = payroll_export_rows(db, start_date, end_date, store_id=current_user.store_id)
     except AttendanceError as exc:
         raise bad_request(str(exc))
 

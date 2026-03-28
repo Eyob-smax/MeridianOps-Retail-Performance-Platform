@@ -9,7 +9,6 @@ from app.schemas.auth import AuthUser, LoginRequest, LoginResponse, LogoutRespon
 from app.schemas.security import SecurityPolicyResponse
 from app.services.auth_service import (
     authenticate_user,
-    ensure_seed_users,
     get_user_with_roles,
     issue_session,
     revoke_session,
@@ -24,9 +23,6 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
         raise bad_request(
             f"Password must be at least {settings.auth_min_password_length} characters."
         )
-
-    ensure_seed_users(db)
-    db.flush()
 
     user, error_code, locked_until = authenticate_user(db, payload.username, payload.password)
 
@@ -59,6 +55,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     roles = hydrated[1] if hydrated else []
     user_data = AuthUser(
         id=user.id,
+        store_id=user.store_id,
         username=user.username,
         display_name=user.display_name,
         roles=roles,

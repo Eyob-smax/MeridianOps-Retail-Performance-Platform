@@ -4,6 +4,7 @@ export interface AttendanceRule {
   tolerance_minutes: number;
   auto_break_after_hours: number;
   auto_break_minutes: number;
+  cross_day_shift_cutoff_hour: number;
   late_early_penalty_hours: string;
 }
 
@@ -48,7 +49,8 @@ export async function rotateAttendanceQr() {
 
 export async function attendanceCheckIn(payload: {
   device_id: string;
-  qr_token: string;
+  qr_token?: string;
+  nfc_tag?: string;
   check_in_at?: string;
   scheduled_start_at?: string;
   scheduled_end_at?: string;
@@ -61,7 +63,8 @@ export async function attendanceCheckIn(payload: {
 
 export async function attendanceCheckOut(payload: {
   device_id: string;
-  qr_token: string;
+  qr_token?: string;
+  nfc_tag?: string;
   check_out_at?: string;
   latitude?: string;
   longitude?: string;

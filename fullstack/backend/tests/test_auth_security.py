@@ -1,9 +1,14 @@
 from decimal import Decimal
 
+import pytest
+
 from app.core.encryption import FieldEncryptor
 from app.core.config import settings
 from app.core.masking import mask_record, mask_sensitive
+import app.core.security as security
 from app.core.security import password_is_valid
+from app.db.models import User, UserRole
+from app.services.auth_service import create_user
 
 
 def _login(client, username: str, password: str):
@@ -31,6 +36,22 @@ def test_login_and_session_flow(client) -> None:
 
     session_after_logout = client.get("/api/v1/auth/session")
     assert session_after_logout.status_code == 401
+
+
+def test_login_does_not_auto_seed_missing_user(client, db_session_factory) -> None:
+    db = db_session_factory()
+    try:
+        user = db.query(User).filter(User.username == "admin").one_or_none()
+        assert user is not None
+        db.query(UserRole).filter(UserRole.user_id == user.id).delete(synchronize_session=False)
+        db.delete(user)
+        db.commit()
+    finally:
+        db.close()
+
+    response = _login(client, "admin", "ChangeMeNow123")
+    assert response.status_code == 401
+    assert "invalid" in response.json()["detail"].lower()
 
 
 def test_lockout_after_five_failures(client) -> None:
@@ -144,7 +165,7 @@ def test_member_points_and_wallet_flow(client) -> None:
         "/api/v1/members/MEM-001/wallet/debit",
         json={"amount": "30.00", "reason": "too much"},
     )
-    assert over_debit.status_code == 400
+    assert over_debit.status_code == 409
     assert "insufficient" in over_debit.json()["detail"].lower()
 
     points_ledger = client.get("/api/v1/members/MEM-001/points-ledger")
@@ -236,6 +257,46 @@ def test_campaign_issue_and_redeem_flow(client) -> None:
     assert redeem_again.json()["reason_code"] == "ALREADY_REDEEMED"
 
 
+def test_member_store_isolation(client, db_session) -> None:
+    create_user(
+        db=db_session,
+        username="manager102",
+        password="ChangeMeNow123",
+        display_name="Store Manager 102",
+        roles=["store_manager"],
+        store_id=102,
+    )
+    db_session.commit()
+
+    _login(client, "manager", "ChangeMeNow123")
+    created = client.post(
+        "/api/v1/members",
+        json={
+            "member_code": "MEM-ISO-1",
+            "full_name": "Isolated Member",
+            "tier": "silver",
+            "stored_value_enabled": False,
+        },
+    )
+    assert created.status_code == 200
+
+    _login(client, "manager102", "ChangeMeNow123")
+    lookup = client.get("/api/v1/members/MEM-ISO-1")
+    assert lookup.status_code == 404
+    assert "member not found" in lookup.json()["detail"].lower()
+
+    list_resp = client.get("/api/v1/members")
+    assert list_resp.status_code == 200
+    assert list_resp.json() == []
+
+    accrue = client.post(
+        "/api/v1/members/MEM-ISO-1/points/accrue",
+        json={"pre_tax_amount": "10.00", "reason": "purchase"},
+    )
+    assert accrue.status_code == 404
+    assert "member not found" in accrue.json()["detail"].lower()
+
+
 def test_campaign_member_daily_limit(client) -> None:
     _login(client, "manager", "ChangeMeNow123")
 
@@ -310,6 +371,75 @@ def test_campaign_member_daily_limit(client) -> None:
     assert second_redeem.json()["reason_code"] == "MEMBER_DAILY_LIMIT_REACHED"
 
 
+def test_campaign_store_isolation(client, db_session) -> None:
+    create_user(
+        db=db_session,
+        username="manager102",
+        password="ChangeMeNow123",
+        display_name="Store Manager 102",
+        roles=["store_manager"],
+        store_id=102,
+    )
+    db_session.commit()
+
+    _login(client, "manager", "ChangeMeNow123")
+    campaign_resp = client.post(
+        "/api/v1/campaigns",
+        json={
+            "name": "Store 101 Only",
+            "campaign_type": "fixed_amount",
+            "effective_start": "2026-01-01",
+            "effective_end": "2027-12-31",
+            "daily_redemption_cap": 200,
+            "per_member_daily_limit": 1,
+            "fixed_amount_off": "5.00",
+        },
+    )
+    assert campaign_resp.status_code == 200
+    campaign_id = campaign_resp.json()["id"]
+
+    issue_resp = client.post(
+        "/api/v1/campaigns/issue",
+        json={
+            "campaign_id": campaign_id,
+            "issuance_method": "printable_qr",
+        },
+    )
+    assert issue_resp.status_code == 200
+    coupon_code = issue_resp.json()["coupon_code"]
+
+    _login(client, "manager102", "ChangeMeNow123")
+
+    list_resp = client.get("/api/v1/campaigns")
+    assert list_resp.status_code == 200
+    assert list_resp.json() == []
+
+    detail_resp = client.get(f"/api/v1/campaigns/{campaign_id}")
+    assert detail_resp.status_code == 404
+    assert "not found" in detail_resp.json()["detail"].lower()
+
+    issue_other_store = client.post(
+        "/api/v1/campaigns/issue",
+        json={
+            "campaign_id": campaign_id,
+            "issuance_method": "printable_qr",
+        },
+    )
+    assert issue_other_store.status_code == 404
+    assert "not found" in issue_other_store.json()["detail"].lower()
+
+    redeem_other_store = client.post(
+        "/api/v1/campaigns/redeem",
+        json={
+            "coupon_code": coupon_code,
+            "pre_tax_amount": "20.00",
+            "order_reference": "STORE-102-TRY",
+        },
+    )
+    assert redeem_other_store.status_code == 200
+    assert redeem_other_store.json()["reason_code"] == "COUPON_NOT_FOUND"
+
+
 def test_login_cookie_secure_flag_disabled_for_local_env(client, monkeypatch) -> None:
     monkeypatch.setattr(settings, "app_env", "local")
     response = _login(client, "admin", "ChangeMeNow123")
@@ -322,3 +452,18 @@ def test_login_cookie_secure_flag_enabled_for_non_local_env(client, monkeypatch)
     response = _login(client, "admin", "ChangeMeNow123")
     set_cookie = response.headers.get("set-cookie", "").lower()
     assert "secure" in set_cookie
+
+
+def test_password_hashing_backend_readiness_requires_bcrypt_in_production(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_env", "production")
+    monkeypatch.setattr(security, "_bcrypt", None)
+
+    with pytest.raises(RuntimeError):
+        security.assert_password_hashing_backend_ready()
+
+
+def test_password_hashing_backend_readiness_allows_local_without_bcrypt(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "app_env", "local")
+    monkeypatch.setattr(security, "_bcrypt", None)
+
+    security.assert_password_hashing_backend_ready()

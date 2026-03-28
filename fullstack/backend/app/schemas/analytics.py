@@ -8,6 +8,18 @@ WidgetKind = Literal["kpi", "trend", "breakdown", "table"]
 WidgetMetric = Literal["revenue", "orders", "refunds", "gross_margin"]
 WidgetDimension = Literal["store", "date"]
 ExportFormat = Literal["csv", "png", "pdf"]
+FilterOperator = Literal["eq", "in", "gte", "lte", "between"]
+
+
+class WidgetFilterBinding(BaseModel):
+    key: str = Field(min_length=2, max_length=64)
+    operator: FilterOperator = "eq"
+    value: str = Field(min_length=1, max_length=120)
+
+
+class WidgetLinkBinding(BaseModel):
+    source_filter_key: str = Field(min_length=2, max_length=64)
+    target_filter_key: str = Field(min_length=2, max_length=64)
 
 
 class DashboardWidget(BaseModel):
@@ -20,6 +32,8 @@ class DashboardWidget(BaseModel):
     y: int = Field(ge=0, le=999)
     w: int = Field(ge=1, le=12)
     h: int = Field(ge=1, le=12)
+    filters: list[WidgetFilterBinding] = Field(default_factory=list, max_length=8)
+    links: list[WidgetLinkBinding] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_grid_span(self):

@@ -5,6 +5,7 @@ from app.db.models.attendance import (
     AttendanceRuleConfig,
     AttendanceShift,
     DeviceBinding,
+    NfcBadge,
     RotatingQRToken,
 )
 from app.db.models.audit import AuditLog
@@ -36,6 +37,7 @@ __all__ = [
     "DashboardLayout",
     "DashboardShareLink",
     "DeviceBinding",
+    "NfcBadge",
     "KPIDailyMetric",
     "KPIJobRun",
     "AuthAttempt",

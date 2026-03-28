@@ -3,6 +3,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.encryption import field_encryptor
 from app.db.models import Member, PointsLedger, WalletAccount, WalletLedger
 from app.schemas.loyalty import MemberResponse
 from app.types.business import MemberTier
@@ -23,10 +24,14 @@ def get_wallet_balance(db: Session, member_id: int) -> Decimal | None:
 
 
 def to_member_response(db: Session, member: Member) -> MemberResponse:
+    full_name = member.full_name
+    if field_encryptor.enabled:
+        full_name = field_encryptor.decrypt(full_name) or ""
     return MemberResponse(
         id=member.id,
+        store_id=member.store_id,
         member_code=member.member_code,
-        full_name=member.full_name,
+        full_name=full_name,
         tier=MemberTier(member.tier),
         stored_value_enabled=member.stored_value_enabled,
         points_balance=get_points_balance(db, member.id),

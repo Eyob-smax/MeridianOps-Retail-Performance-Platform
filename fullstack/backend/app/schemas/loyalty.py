@@ -20,6 +20,7 @@ class MemberUpdateRequest(BaseModel):
 
 class MemberResponse(BaseModel):
     id: int
+    store_id: int | None = None
     member_code: str
     full_name: str
     tier: MemberTier

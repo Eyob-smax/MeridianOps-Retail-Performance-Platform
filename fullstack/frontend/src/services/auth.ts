@@ -4,6 +4,7 @@ import { apiClient } from "@/services/api";
 
 export interface AuthUser {
   id: number;
+  store_id: number | null;
   username: string;
   display_name: string;
   roles: UserRole[];
