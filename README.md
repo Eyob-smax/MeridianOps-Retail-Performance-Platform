@@ -3,7 +3,7 @@
 ## Start Backend + Frontend + Database
 
 ```bash
-docker compose -f fullstack/docker-compose.yml up --build -d
+docker compose -f docker-compose.yml up --build -d
 ```
 
 Services:
@@ -17,7 +17,7 @@ Services:
 Run this after the app stack is up:
 
 ```bash
-docker compose -f fullstack/docker-compose.yml --profile test run --rm backend-tests && docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
+docker compose -f docker-compose.yml --profile test run --rm backend-tests && docker compose -f docker-compose.yml --profile test run --rm frontend-tests
 ```
 
 Important: do not use `up --abort-on-container-exit` for sequential tests. That mode can stop the second test container early (exit code 137) when the first test container exits.
@@ -45,31 +45,31 @@ Notes:
 Backend only:
 
 ```bash
-docker compose -f fullstack/docker-compose.yml --profile test run --rm backend-tests
+docker compose -f docker-compose.yml --profile test run --rm backend-tests
 ```
 
 Frontend only:
 
 ```bash
-docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
+docker compose -f docker-compose.yml --profile test run --rm frontend-tests
 ```
 
 ## Full Production Validation Flow
 
 ```bash
-docker compose -f fullstack/docker-compose.yml up --build -d
-docker compose -f fullstack/docker-compose.yml --profile test run --rm backend-tests && docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
-docker compose -f fullstack/docker-compose.yml down
+docker compose -f docker-compose.yml up --build -d
+docker compose -f docker-compose.yml --profile test run --rm backend-tests && docker compose -f docker-compose.yml --profile test run --rm frontend-tests
+docker compose -f docker-compose.yml down
 ```
 
 ## Stop Everything
 
 ```bash
-docker compose -f fullstack/docker-compose.yml down
+docker compose -f docker-compose.yml down
 ```
 
 To remove the database volume too:
 
 ```bash
-docker compose -f fullstack/docker-compose.yml down -v
+docker compose -f docker-compose.yml down -v
 ```
