@@ -8,7 +8,7 @@ docker compose -f docker-compose.yml up --build -d
 
 Services:
 
-- Backend API: http://localhost:1000/api/v1/health
+- Backend API: http://localhost:8000/api/v1/health
 - Frontend app: http://localhost:5173
 - Postgres: localhost:5432
 
