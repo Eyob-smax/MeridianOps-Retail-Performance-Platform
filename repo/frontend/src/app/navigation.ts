@@ -15,7 +15,11 @@ export const navigationItems: NavigationItem[] = [
   { name: "Campaigns", path: "/app/campaigns", roles: ["administrator", "store_manager"] },
   { name: "Checkout", path: "/app/checkout", roles: ["administrator", "store_manager", "cashier"] },
   { name: "Members", path: "/app/members", roles: ["administrator", "store_manager", "cashier"] },
-  { name: "Training", path: "/app/training", roles: ["administrator", "store_manager", "employee"] },
+  {
+    name: "Training",
+    path: "/app/training",
+    roles: ["administrator", "store_manager", "employee"],
+  },
   {
     name: "Inventory Receiving",
     path: "/app/inventory/receiving",

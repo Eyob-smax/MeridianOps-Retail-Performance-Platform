@@ -1,0 +1,80 @@
+{
+  "summary": "Closed the remaining audit gaps by enforcing single-use attendance QR tokens, adding cross-day attendance business-date handling, scoping KPI access for store managers, wiring a shared-dashboard frontend route, and making the default Docker backend test run include PostgreSQL locking coverage.",
+  "fixes": [
+    {
+      "area": "Attendance anti-fraud and cross-day rules",
+      "details": [
+        "Added single-use QR consumption with persisted used_at tracking so replayed attendance tokens are rejected.",
+        "Added cross_day_shift_cutoff_hour to attendance rules and used it to resolve business_date for overnight shifts.",
+        "Extended attendance schemas and admin/attendance UI surfaces to carry the new cross-day rule and show resolved business dates."
+      ],
+      "files": [
+        "fullstack/backend/app/db/models/attendance.py",
+        "fullstack/backend/app/schemas/attendance.py",
+        "fullstack/backend/app/services/attendance_service.py",
+        "fullstack/backend/alembic/versions/20260328_0010_attendance_qr_cross_day.py",
+        "fullstack/frontend/src/services/attendance.ts",
+        "fullstack/frontend/src/views/app/AdminSecurityView.vue",
+        "fullstack/frontend/src/views/app/AttendanceView.vue"
+      ]
+    },
+    {
+      "area": "Manager KPI store isolation",
+      "details": [
+        "Added store-scope resolution in KPI backfill and metrics endpoints.",
+        "Store managers can now only request their assigned store; cross-store KPI reads/backfills return 403.",
+        "Preserved administrator multi-store access."
+      ],
+      "files": [
+        "fullstack/backend/app/api/v1/endpoints/operations.py"
+      ]
+    },
+    {
+      "area": "Shared-dashboard frontend route/render flow",
+      "details": [
+        "Added shared dashboard API client typing and fetch helper.",
+        "Added public /shared/:token route and a read-only shared dashboard view rendering totals, store breakdown, and rows.",
+        "Added frontend analytics service test coverage for shared dashboard payload loading."
+      ],
+      "files": [
+        "fullstack/frontend/src/services/analytics.ts",
+        "fullstack/frontend/src/services/analytics.spec.ts",
+        "fullstack/frontend/src/router/index.ts",
+        "fullstack/frontend/src/views/shared/SharedDashboardView.vue"
+      ]
+    },
+    {
+      "area": "Default PostgreSQL transactional coverage in test path",
+      "details": [
+        "Injected POSTGRES_TEST_DATABASE_URL into the default backend-tests Docker service so PostgreSQL locking tests run in the standard backend container execution.",
+        "Simplified the Docker test runner because the default backend test pass now carries the PostgreSQL locking suite automatically.",
+        "Updated README test notes to document that default backend Docker tests include the PostgreSQL locking/concurrency suite."
+      ],
+      "files": [
+        "fullstack/docker-compose.yml",
+        "fullstack/run-tests.sh",
+        "fullstack/README.md"
+      ]
+    },
+    {
+      "area": "Compile-path cleanup",
+      "details": [
+        "Removed the stale extractError call in CampaignsView and routed load failures through the existing notifyError helper so the frontend build succeeds."
+      ],
+      "files": [
+        "fullstack/frontend/src/views/app/CampaignsView.vue"
+      ]
+    }
+  ],
+  "tests_added": [
+    "fullstack/backend/tests/test_attendance_flow.py::test_attendance_rejects_replayed_qr_token",
+    "fullstack/backend/tests/test_attendance_flow.py::test_attendance_cross_day_shift_uses_prior_business_date",
+    "fullstack/backend/tests/test_ops_kpi.py::test_store_manager_cannot_access_other_store_kpi_data",
+    "fullstack/frontend/src/services/analytics.spec.ts::loads a shared dashboard payload"
+  ],
+  "validation": {
+    "backend_tests": "..\\\\..\\\\.venv\\\\Scripts\\\\python.exe -m pytest => 43 passed, 2 skipped",
+    "frontend_build": "npm.cmd run build => success",
+    "frontend_targeted_test": "node_modules\\\\.bin\\\\vitest.cmd run src\\\\services\\\\analytics.spec.ts --pool forks => 3 passed"
+  }
+}

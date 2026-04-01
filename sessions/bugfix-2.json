@@ -1,0 +1,52 @@
+{
+  "summary": "Implemented campaign store isolation, dynamic analytics store scope, and upgraded analytics builder with drag-drop/filter-link metadata.",
+  "fixes": [
+    {
+      "area": "Campaign store/tenant isolation",
+      "details": [
+        "Added store_id to campaigns, coupons, coupon_issuance_events, and coupon_redemption_events models.",
+        "Added Alembic migration 20260328_0009_campaign_store_scope.py with backfill from creator/campaign relationships.",
+        "Scoped campaign list/detail/update/issue/redeem by current user store_id (administrator remains unscoped).",
+        "Made redemption checks and event writes store-aware, including coupon lookup and daily/member counters."
+      ],
+      "files": [
+        "fullstack/backend/app/db/models/campaigns.py",
+        "fullstack/backend/alembic/versions/20260328_0009_campaign_store_scope.py",
+        "fullstack/backend/app/services/campaign_service.py",
+        "fullstack/backend/app/api/v1/endpoints/campaigns.py",
+        "fullstack/backend/app/schemas/campaigns.py"
+      ]
+    },
+    {
+      "area": "Analytics manager scope",
+      "details": [
+        "Removed hardcoded [101,102,103] manager scope.",
+        "Now derives manager dashboard scope from current_user.store_id and rejects unassigned managers."
+      ],
+      "files": [
+        "fullstack/backend/app/services/analytics_service.py"
+      ]
+    },
+    {
+      "area": "Dashboard builder semantics",
+      "details": [
+        "Added visual drag-drop canvas for 12-column positioning of widgets.",
+        "Added widget-level filter bindings and explicit filter-link controls.",
+        "Extended frontend and backend widget schemas/types to persist filters/links in layout metadata."
+      ],
+      "files": [
+        "fullstack/frontend/src/views/app/AnalyticsBuilderView.vue",
+        "fullstack/frontend/src/style.css",
+        "fullstack/frontend/src/services/analytics.ts",
+        "fullstack/backend/app/schemas/analytics.py"
+      ]
+    }
+  ],
+  "tests_added": [
+    "fullstack/backend/tests/test_auth_security.py::test_campaign_store_isolation"
+  ],
+  "validation": {
+    "backend_tests": "docker compose -f fullstack/docker-compose.yml --profile test run --rm backend-tests => 22 passed",
+    "frontend_tests": "docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests => 11 passed"
+  }
+}
