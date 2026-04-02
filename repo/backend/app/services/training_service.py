@@ -3,7 +3,9 @@ from datetime import date, timedelta
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import Session
 
+from app.core.security import ROLE_EMPLOYEE
 from app.db.models import QuizAssignment, QuizAttempt, QuizQuestion, QuizTopic, ReviewQueueSnapshot, SpacedRepetitionState, User
+from app.db.models import UserRole
 from app.schemas.auth import AuthUser
 from app.schemas.training import (
     AssignmentRequest,
@@ -117,6 +119,17 @@ def assign_topic(db: Session, payload: AssignmentRequest, current_user: AuthUser
         raise TrainingError("Employee not found")
     if current_user.store_id is not None and employee.store_id != current_user.store_id:
         raise TrainingError("Employee not found")
+
+    has_employee_role = db.execute(
+        select(UserRole.id)
+        .where(
+            UserRole.user_id == employee.id,
+            UserRole.role_name == ROLE_EMPLOYEE,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if not has_employee_role:
+        raise TrainingError("Assignee must have employee role")
 
     existing = db.execute(
         select(QuizAssignment)

@@ -35,7 +35,7 @@ Important: do not use `up --abort-on-container-exit` for sequential tests. That 
 What this does:
 
 - Runs backend tests first and stops on failure.
-- The backend test container also executes the PostgreSQL locking/concurrency suite by default through `POSTGRES_TEST_DATABASE_URL`.
+- The backend test container executes the PostgreSQL locking/concurrency suite and fails if that suite would be skipped.
 - Runs frontend tests only if backend tests pass.
 - Returns non-zero exit code on failure.
 
@@ -47,8 +47,8 @@ Do not run backend or frontend directly on the host machine for acceptance/runti
 
 Notes:
 
-- Backend PostgreSQL locking tests are skipped only when `POSTGRES_TEST_DATABASE_URL` is not configured.
-- In the Docker test profile, `POSTGRES_TEST_DATABASE_URL` is preconfigured in Compose to execute PostgreSQL locking tests in `backend-tests`.
+- Backend PostgreSQL locking tests fail (instead of skip) when `REQUIRE_POSTGRES_LOCKING_TESTS=1` or `CI=true` and `POSTGRES_TEST_DATABASE_URL` is missing.
+- `run_tests.sh` sets `REQUIRE_POSTGRES_LOCKING_TESTS=1` for `backend-tests`, enforcing the locking suite in CI and local Docker runs.
 
 ## Run Individual Test Suites In Docker
 

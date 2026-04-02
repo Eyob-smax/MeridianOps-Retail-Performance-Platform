@@ -22,10 +22,23 @@ def _pg_url() -> str | None:
     return os.getenv("POSTGRES_TEST_DATABASE_URL")
 
 
+def _is_truthy_env(name: str) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _require_postgres_locking_tests() -> bool:
+    return _is_truthy_env("REQUIRE_POSTGRES_LOCKING_TESTS") or _is_truthy_env("CI")
+
+
 @pytest.fixture(scope="module")
 def pg_engine():
     url = _pg_url()
     if not url:
+        if _require_postgres_locking_tests():
+            pytest.fail(
+                "POSTGRES_TEST_DATABASE_URL is required when CI or REQUIRE_POSTGRES_LOCKING_TESTS=1"
+            )
         pytest.skip("POSTGRES_TEST_DATABASE_URL is not set; skipping PostgreSQL locking tests")
 
     engine = create_engine(url, future=True)

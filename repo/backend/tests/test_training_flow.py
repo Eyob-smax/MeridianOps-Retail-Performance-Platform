@@ -1,3 +1,6 @@
+from datetime import date
+
+
 def _login(client, username: str, password: str = "ChangeMeNow123"):
     client.post("/api/v1/auth/logout")
     response = client.post("/api/v1/auth/login", json={"username": username, "password": password})
@@ -124,3 +127,95 @@ def test_training_attempt_requires_active_assignment(client):
     )
     assert attempt.status_code == 400
     assert attempt.json()["error"]["message"] == "No active assignment for this topic"
+
+
+def test_training_assignment_requires_employee_role(client):
+    _login(client, "manager")
+
+    topic = client.post(
+        "/api/v1/training/topics",
+        json={"code": "ROLE-CHECK", "name": "Role Check", "difficulty": "medium"},
+    )
+    assert topic.status_code == 200
+
+    assignment = client.post(
+        "/api/v1/training/assignments",
+        json={"employee_username": "manager", "topic_code": "ROLE-CHECK"},
+    )
+    assert assignment.status_code == 400
+    assert assignment.json()["error"]["message"] == "Assignee must have employee role"
+
+
+def test_training_recommendation_repeated_failures_and_recovery(client):
+    _login(client, "manager")
+
+    topic = client.post(
+        "/api/v1/training/topics",
+        json={"code": "RECO-EDGE", "name": "Recommendation Edge", "difficulty": "medium"},
+    )
+    assert topic.status_code == 200
+
+    question = client.post(
+        "/api/v1/training/questions",
+        json={
+            "topic_code": "RECO-EDGE",
+            "question_text": "Who approves a high-risk override?",
+            "option_a": "Any cashier",
+            "option_b": "Store manager",
+            "option_c": "Customer",
+            "option_d": "No one",
+            "correct_answer": "Store manager",
+        },
+    )
+    assert question.status_code == 200
+    question_id = question.json()["question_id"]
+
+    assignment = client.post(
+        "/api/v1/training/assignments",
+        json={"employee_username": "employee", "topic_code": "RECO-EDGE"},
+    )
+    assert assignment.status_code == 200
+
+    _login(client, "employee")
+
+    wrong_one = client.post(
+        "/api/v1/training/attempts",
+        json={"topic_code": "RECO-EDGE", "question_id": question_id, "selected_answer": "Any cashier"},
+    )
+    assert wrong_one.status_code == 200
+    wrong_one_payload = wrong_one.json()
+    assert wrong_one_payload["correct"] is False
+    assert "two recent misses" not in wrong_one_payload["recommendation_reason"]
+
+    wrong_two = client.post(
+        "/api/v1/training/attempts",
+        json={"topic_code": "RECO-EDGE", "question_id": question_id, "selected_answer": "Customer"},
+    )
+    assert wrong_two.status_code == 200
+    wrong_two_payload = wrong_two.json()
+    assert wrong_two_payload["correct"] is False
+    assert "two recent misses" in wrong_two_payload["recommendation_reason"]
+
+    first_correct = client.post(
+        "/api/v1/training/attempts",
+        json={"topic_code": "RECO-EDGE", "question_id": question_id, "selected_answer": "Store manager"},
+    )
+    assert first_correct.status_code == 200
+    first_correct_payload = first_correct.json()
+    assert first_correct_payload["correct"] is True
+    assert "based on medium difficulty" in first_correct_payload["recommendation_reason"]
+
+    second_correct = client.post(
+        "/api/v1/training/attempts",
+        json={"topic_code": "RECO-EDGE", "question_id": question_id, "selected_answer": "Store manager"},
+    )
+    assert second_correct.status_code == 200
+    second_correct_payload = second_correct.json()
+    assert second_correct_payload["correct"] is True
+    assert "recent mastery" in second_correct_payload["recommendation_reason"]
+
+    wrong_two_due = date.fromisoformat(wrong_two_payload["next_review_date"])
+    first_correct_due = date.fromisoformat(first_correct_payload["next_review_date"])
+    second_correct_due = date.fromisoformat(second_correct_payload["next_review_date"])
+    assert first_correct_due > wrong_two_due
+    assert second_correct_due > first_correct_due

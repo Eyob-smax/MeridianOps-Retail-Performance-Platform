@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -7,7 +8,7 @@ from app.core.config import settings
 from app.core.masking import mask_record, mask_sensitive
 import app.core.security as security
 from app.core.security import password_is_valid
-from app.db.models import User, UserRole
+from app.db.models import LockoutWindow, User, UserRole
 from app.services.auth_service import create_user
 
 
@@ -68,6 +69,33 @@ def test_lockout_after_five_failures(client) -> None:
     locked_response = _login(client, "manager", "ChangeMeNow123")
     assert locked_response.status_code == 401
     assert "locked" in locked_response.json()["detail"].lower()
+
+
+def test_lockout_expires_and_user_can_recover(client, db_session_factory) -> None:
+    for _ in range(settings.auth_max_failed_attempts):
+        response = _login(client, "manager", "wrongpassword123")
+
+    assert response.status_code == 401
+    assert "locked" in response.json()["detail"].lower()
+
+    db = db_session_factory()
+    try:
+        lockout = db.query(LockoutWindow).filter(LockoutWindow.username == "manager").one_or_none()
+        assert lockout is not None
+        lockout.locked_until = security.utcnow() - timedelta(minutes=1)
+        db.commit()
+    finally:
+        db.close()
+
+    recovered = _login(client, "manager", "ChangeMeNow123")
+    assert recovered.status_code == 200
+
+    db = db_session_factory()
+    try:
+        remaining = db.query(LockoutWindow).filter(LockoutWindow.username == "manager").one_or_none()
+        assert remaining is None
+    finally:
+        db.close()
 
 
 def test_unauthenticated_secure_endpoint_returns_401(client) -> None:
@@ -462,8 +490,9 @@ def test_password_hashing_backend_readiness_requires_bcrypt_in_production(monkey
         security.assert_password_hashing_backend_ready()
 
 
-def test_password_hashing_backend_readiness_allows_local_without_bcrypt(monkeypatch) -> None:
+def test_password_hashing_backend_readiness_requires_bcrypt_in_local(monkeypatch) -> None:
     monkeypatch.setattr(settings, "app_env", "local")
     monkeypatch.setattr(security, "_bcrypt", None)
 
-    security.assert_password_hashing_backend_ready()
+    with pytest.raises(RuntimeError):
+        security.assert_password_hashing_backend_ready()
