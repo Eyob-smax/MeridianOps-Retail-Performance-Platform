@@ -1,0 +1,153 @@
+{
+  "summary": "Resolved all findings from the delivery acceptance audit: added missing order lifecycle domain, hardened inventory row-locking, replaced heuristic KPI materialization with actual transactional data, extended at-rest encryption to wallet monetary fields, enforced bcrypt-only password hashing, added audit trail query endpoints, implemented automatic QR rotation, and fixed documentation inconsistencies.",
+  "fixes": [
+    {
+      "area": "Order lifecycle domain (Blocker)",
+      "details": [
+        "Added Order and OrderLine models with status state machine: created → reserved → completed | cancelled.",
+        "Order reservation transactionally creates inventory reservations for each line; completion and cancellation release them.",
+        "Added RBAC-gated REST endpoints: POST /orders, /orders/reserve, /orders/complete, /orders/cancel, GET /orders, /orders/{ref}.",
+        "Added Alembic migration 20260403_0012 for orders and order_lines tables."
+      ],
+      "files": [
+        "repo/backend/app/db/models/orders.py",
+        "repo/backend/app/schemas/orders.py",
+        "repo/backend/app/services/order_service.py",
+        "repo/backend/app/api/v1/endpoints/orders.py",
+        "repo/backend/app/api/v1/router.py",
+        "repo/backend/app/db/models/__init__.py",
+        "repo/backend/alembic/versions/20260403_0012_orders_lifecycle.py"
+      ]
+    },
+    {
+      "area": "Inventory row-locking for transfer and count paths (High)",
+      "details": [
+        "Added SELECT ... FOR UPDATE on inventory_ledger rows before reading position totals in post_transfer and post_count.",
+        "This serializes concurrent transfer/count operations on the same item/location, matching the existing reservation locking strategy.",
+        "Added PostgreSQL concurrent transfer locking test to verify only one of two simultaneous 4-unit transfers from a 5-unit source succeeds."
+      ],
+      "files": [
+        "repo/backend/app/services/inventory_service.py",
+        "repo/backend/tests/test_postgres_locking.py"
+      ]
+    },
+    {
+      "area": "KPI materialization traceability (High)",
+      "details": [
+        "Removed synthetic _base_attempts formula and _store_from_order_reference heuristic string-parsing function.",
+        "KPI conversion/AOV now counts total_attempts from actual CouponRedemptionEvent rows and uses explicit store_id from each event.",
+        "Inventory turnover uses row.store_id directly instead of falling back to location_id."
+      ],
+      "files": [
+        "repo/backend/app/services/kpi_service.py"
+      ]
+    },
+    {
+      "area": "At-rest encryption for wallet monetary fields (High)",
+      "details": [
+        "Added _encrypt_amount and _decrypt_amount helpers in loyalty_service.py.",
+        "Wallet credit/debit operations now decrypt balance before arithmetic and write back the updated value.",
+        "Wallet ledger balance_after field uses decrypted balance.",
+        "Member view service handles encrypted wallet balance when building responses."
+      ],
+      "files": [
+        "repo/backend/app/services/loyalty_service.py",
+        "repo/backend/app/services/member_view_service.py"
+      ]
+    },
+    {
+      "area": "bcrypt-only password hashing (High)",
+      "details": [
+        "Changed bcrypt from conditional try/import to hard import — no PBKDF2 fallback in any environment.",
+        "assert_password_hashing_backend_ready is now a no-op (bcrypt availability is enforced at import time).",
+        "Updated existing auth tests that expected RuntimeError from the removed conditional logic."
+      ],
+      "files": [
+        "repo/backend/app/core/security.py",
+        "repo/backend/tests/test_auth_security.py"
+      ]
+    },
+    {
+      "area": "Documentation consistency and partial-scope removal (High)",
+      "details": [
+        "Fixed frontend README paths from fullstack/ to repo/ (docker-compose.yml references).",
+        "Rewrote docs/design.md: removed 'partial' delivery declarations, updated topology paths, added order lifecycle and encryption coverage sections, and added a requirement traceability matrix."
+      ],
+      "files": [
+        "repo/frontend/README.md",
+        "docs/design.md"
+      ]
+    },
+    {
+      "area": "Automatic QR token rotation in attendance UI (Medium)",
+      "details": [
+        "Added Start/Stop Auto-Rotation button that fires rotateAttendanceQr every 30 seconds.",
+        "Added countdown timer showing seconds until current token expires.",
+        "Intervals and countdown are cleaned up on component unmount."
+      ],
+      "files": [
+        "repo/frontend/src/views/app/AttendanceView.vue"
+      ]
+    },
+    {
+      "area": "Audit trail query endpoints for loyalty/campaign/order (Medium)",
+      "details": [
+        "Added /audit/events with optional resource_type and action prefix filters.",
+        "Added /audit/events/member for member/loyalty/wallet audit events with optional member_code filter.",
+        "Added /audit/events/campaign for campaign/coupon audit events.",
+        "Added /audit/events/order for order lifecycle audit events.",
+        "All endpoints are role-gated to administrator and store_manager."
+      ],
+      "files": [
+        "repo/backend/app/api/v1/endpoints/audit.py",
+        "repo/backend/app/api/v1/router.py"
+      ]
+    },
+    {
+      "area": "Analytics dashboard real refund/cost data (Medium)",
+      "details": [
+        "Added refund_total and cost_total columns to kpi_daily_metrics via migration 20260403_0011.",
+        "Updated analytics _build_rows to read refund_total and cost_total from KPI metrics instead of hardcoding zeros.",
+        "gross_margin now computed as revenue - refunds - cost."
+      ],
+      "files": [
+        "repo/backend/app/db/models/kpi.py",
+        "repo/backend/app/services/analytics_service.py",
+        "repo/backend/alembic/versions/20260403_0011_kpi_refund_cost_columns.py"
+      ]
+    }
+  ],
+  "tests_added": [
+    "repo/backend/tests/test_order_lifecycle.py::test_order_create",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_duplicate_reference_rejected",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_reserve_creates_inventory_reservation",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_complete_releases_reservation",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_cancel_from_reserved",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_cancel_from_created",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_invalid_transition_rejected",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_list",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_detail",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_role_protection",
+    "repo/backend/tests/test_order_lifecycle.py::test_order_reserve_insufficient_stock",
+    "repo/backend/tests/test_security_hardening.py::test_bcrypt_only_hash_produces_bcrypt_prefix",
+    "repo/backend/tests/test_security_hardening.py::test_bcrypt_verify_correct_password",
+    "repo/backend/tests/test_security_hardening.py::test_bcrypt_verify_wrong_password",
+    "repo/backend/tests/test_security_hardening.py::test_bcrypt_module_is_available",
+    "repo/backend/tests/test_security_hardening.py::test_audit_events_endpoint_requires_auth",
+    "repo/backend/tests/test_security_hardening.py::test_audit_events_endpoint_requires_manager_role",
+    "repo/backend/tests/test_security_hardening.py::test_audit_events_accessible_by_admin",
+    "repo/backend/tests/test_security_hardening.py::test_audit_member_events_endpoint",
+    "repo/backend/tests/test_security_hardening.py::test_audit_campaign_events_endpoint",
+    "repo/backend/tests/test_security_hardening.py::test_audit_order_events_endpoint",
+    "repo/backend/tests/test_security_hardening.py::test_audit_events_filter_by_resource_type",
+    "repo/backend/tests/test_security_hardening.py::test_audit_events_filter_by_action",
+    "repo/backend/tests/test_postgres_locking.py::test_postgres_transfer_prevents_double_spend"
+  ],
+  "validation": {
+    "backend_tests": "docker compose --profile test run --rm -e REQUIRE_POSTGRES_LOCKING_TESTS=1 backend-tests => 79 passed",
+    "frontend_tests": "docker compose --profile test run --rm frontend-tests => 16 passed (6 test files)",
+    "app_health": "GET /api/v1/health => ok, GET /api/v1/health/database => ok",
+    "frontend_accessible": "GET http://localhost:5173 => 200",
+    "e2e_order_lifecycle": "curl: create order -> reserve -> complete => all 200, audit events captured"
+  }
+}
