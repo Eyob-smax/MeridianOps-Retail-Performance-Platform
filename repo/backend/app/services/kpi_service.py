@@ -1,4 +1,4 @@
-﻿import json
+import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -22,51 +22,33 @@ def _date_range(start_date: date, end_date: date) -> list[date]:
     return days
 
 
-def _base_attempts(day: date, store_id: int) -> int:
-    return 90 + ((day.toordinal() + store_id) % 75)
-
-
-def _store_from_order_reference(reference: str | None) -> int:
-    if not reference:
-        return 0
-    upper = reference.upper()
-    if "DOWNTOWN" in upper:
-        return 101
-    if "AIRPORT" in upper:
-        return 102
-    if "WEST" in upper:
-        return 103
-    if "NORTH" in upper:
-        return 104
-    if "HARBOR" in upper:
-        return 105
-    if "UNIVERSITY" in upper:
-        return 106
-    if upper.startswith("S") and len(upper) >= 4 and upper[1:4].isdigit():
-        return int(upper[1:4])
-    return 0
-
-
 def _read_conversion_and_aov(db: Session, business_date: date, store_id: int) -> tuple[int, int, Decimal]:
+    """Read conversion and AOV from actual transactional data.
+
+    Uses coupon redemption events as the source of truth. Total attempts are
+    counted from all redemption events (success + failure) for the store on the
+    given date. Successful orders and revenue are derived from success events.
+    """
     rows = db.execute(
         select(CouponRedemptionEvent).where(func.date(CouponRedemptionEvent.created_at) == business_date)
     ).scalars()
 
     successful_orders = 0
+    total_attempts = 0
     revenue_total = Decimal("0.00")
-    total_attempts = _base_attempts(business_date, store_id)
 
     for row in rows:
-        derived_store_id = _store_from_order_reference(row.order_reference)
-        if store_id != 0 and derived_store_id not in {0, store_id}:
+        # Use explicit store_id from the redemption event when available,
+        # falling back to 0 (unscoped) for legacy records.
+        event_store_id = getattr(row, "store_id", None) or 0
+        if store_id != 0 and event_store_id not in {0, store_id}:
             continue
+
+        total_attempts += 1
         if row.status != "success":
             continue
         successful_orders += 1
         revenue_total += Decimal(row.pre_tax_amount) - Decimal(row.discount_amount)
-
-    if successful_orders > total_attempts:
-        total_attempts = successful_orders
 
     return total_attempts, successful_orders, revenue_total.quantize(Decimal("0.01"))
 
@@ -80,7 +62,7 @@ def _read_inventory_turnover(db: Session, business_date: date, store_id: int) ->
     outbound_qty = Decimal("0.000")
 
     for row in rows:
-        row_store_id = row.store_id if row.store_id is not None else row.location_id
+        row_store_id = row.store_id if row.store_id is not None else 0
         if store_id != 0 and row_store_id != store_id:
             continue
         qty = Decimal(row.quantity_delta)

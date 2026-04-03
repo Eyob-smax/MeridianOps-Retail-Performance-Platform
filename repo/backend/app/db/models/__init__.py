@@ -1,4 +1,5 @@
 ﻿from app.db.models.analytics import DashboardLayout, DashboardShareLink
+from app.db.models.orders import Order, OrderLine
 from app.db.models.attendance import (
     AttendanceDailyResult,
     AttendanceMakeupRequest,
@@ -52,6 +53,8 @@ __all__ = [
     "InventoryLocation",
     "InventoryReservation",
     "LockoutWindow",
+    "Order",
+    "OrderLine",
     "Member",
     "PointsLedger",
     "QuizAssignment",

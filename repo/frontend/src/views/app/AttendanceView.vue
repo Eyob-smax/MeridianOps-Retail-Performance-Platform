@@ -12,7 +12,15 @@
       </p>
       <button class="btn" @click="refreshRules">Refresh Rules</button>
       <button class="btn" @click="onRotateQr">Rotate QR Token</button>
-      <p v-if="currentQrToken">Current QR token: {{ currentQrToken }}</p>
+      <button class="btn" @click="toggleAutoRotation">
+        {{ autoRotationActive ? "Stop Auto-Rotation" : "Start Auto-Rotation (30s)" }}
+      </button>
+      <p v-if="currentQrToken">
+        Current QR token: {{ currentQrToken }}
+        <span v-if="qrSecondsRemaining > 0"> (expires in {{ qrSecondsRemaining }}s)</span>
+        <span v-else-if="currentQrToken && qrSecondsRemaining <= 0" class="error"> (expired)</span>
+      </p>
+      <p v-if="autoRotationActive">Auto-rotation active — token refreshes every 30 seconds</p>
     </section>
 
     <section class="panel">
@@ -73,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 
 import {
   attendanceCheckIn,
@@ -111,6 +119,11 @@ const checkoutSummary = ref<{
   };
 } | null>(null);
 
+const autoRotationActive = ref(false);
+const qrSecondsRemaining = ref(0);
+let autoRotationInterval: ReturnType<typeof setInterval> | null = null;
+let countdownInterval: ReturnType<typeof setInterval> | null = null;
+
 const message = ref("");
 const errorMessage = ref("");
 
@@ -129,10 +142,46 @@ async function onRotateQr() {
     currentQrToken.value = row.token;
     qrToken.value = row.token;
     checkoutQrToken.value = row.token;
+    qrSecondsRemaining.value = 30;
     ui.success("Posted", "New attendance QR token generated.");
   } catch (error) {
     errorMessage.value = notifyError(error, "QR token rotation failed.");
   }
+}
+
+function startCountdown() {
+  if (countdownInterval) clearInterval(countdownInterval);
+  countdownInterval = setInterval(() => {
+    if (qrSecondsRemaining.value > 0) {
+      qrSecondsRemaining.value--;
+    }
+  }, 1000);
+}
+
+function stopCountdown() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+}
+
+async function toggleAutoRotation() {
+  if (autoRotationActive.value) {
+    autoRotationActive.value = false;
+    if (autoRotationInterval) {
+      clearInterval(autoRotationInterval);
+      autoRotationInterval = null;
+    }
+    stopCountdown();
+    return;
+  }
+
+  autoRotationActive.value = true;
+  await onRotateQr();
+  startCountdown();
+  autoRotationInterval = setInterval(async () => {
+    await onRotateQr();
+  }, 30000);
 }
 
 async function onCheckIn() {
@@ -184,5 +233,10 @@ onMounted(async () => {
   } catch {
     // Best-effort initial load.
   }
+});
+
+onUnmounted(() => {
+  if (autoRotationInterval) clearInterval(autoRotationInterval);
+  stopCountdown();
 });
 </script>

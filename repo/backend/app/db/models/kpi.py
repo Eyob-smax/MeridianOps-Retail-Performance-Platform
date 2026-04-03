@@ -43,6 +43,8 @@ class KPIDailyMetric(Base):
     total_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     successful_orders: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     revenue_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    refund_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0")
+    cost_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0")
     inventory_outbound_qty: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=Decimal("0"))
     average_inventory_qty: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False, default=Decimal("0"))
     run_id: Mapped[int | None] = mapped_column(ForeignKey("kpi_job_runs.id", ondelete="SET NULL"), nullable=True)

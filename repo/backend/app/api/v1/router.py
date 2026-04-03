@@ -3,12 +3,14 @@
 from app.api.v1.endpoints import (
 	analytics,
 	attendance,
+	audit,
 	auth,
 	campaigns,
 	health,
 	inventory,
 	members,
 	operations,
+	orders,
 	secure,
 	training,
 )
@@ -20,7 +22,9 @@ router.include_router(secure.router)
 router.include_router(members.router)
 router.include_router(campaigns.router)
 router.include_router(inventory.router)
+router.include_router(orders.router)
 router.include_router(training.router)
 router.include_router(attendance.router)
 router.include_router(analytics.router)
+router.include_router(audit.router)
 router.include_router(operations.router)

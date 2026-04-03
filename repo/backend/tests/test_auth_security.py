@@ -482,17 +482,14 @@ def test_login_cookie_secure_flag_enabled_for_non_local_env(client, monkeypatch)
     assert "secure" in set_cookie
 
 
-def test_password_hashing_backend_readiness_requires_bcrypt_in_production(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "app_env", "production")
-    monkeypatch.setattr(security, "_bcrypt", None)
+def test_password_hashing_backend_always_uses_bcrypt() -> None:
+    """bcrypt is now a hard import — no environment-based fallback."""
+    security.assert_password_hashing_backend_ready()
+    hashed = security.hash_password("TestPassword123")
+    assert hashed.startswith("$2b$") or hashed.startswith("$2a$")
 
-    with pytest.raises(RuntimeError):
-        security.assert_password_hashing_backend_ready()
 
-
-def test_password_hashing_backend_readiness_requires_bcrypt_in_local(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "app_env", "local")
-    monkeypatch.setattr(security, "_bcrypt", None)
-
-    with pytest.raises(RuntimeError):
-        security.assert_password_hashing_backend_ready()
+def test_password_hashing_verify_roundtrip() -> None:
+    hashed = security.hash_password("SecureRoundTrip12")
+    assert security.verify_password("SecureRoundTrip12", hashed) is True
+    assert security.verify_password("WrongPassword999", hashed) is False

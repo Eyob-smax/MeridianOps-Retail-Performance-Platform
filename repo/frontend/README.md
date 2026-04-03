@@ -11,25 +11,25 @@ Do not run `npm install`, `npm run dev`, `npm run test`, or `npm run build` dire
 ## Start Full Stack (Docker)
 
 ```bash
-docker compose -f fullstack/docker-compose.yml up --build -d
+docker compose -f docker-compose.yml up --build -d
 ```
 
 ## Run Frontend Tests (Docker)
 
 ```bash
-docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
+docker compose -f docker-compose.yml --profile test run --rm frontend-tests
 ```
 
 ## Run Full Test Sequence (Docker)
 
 ```bash
-docker compose -f fullstack/docker-compose.yml --profile test run --rm backend-tests && docker compose -f fullstack/docker-compose.yml --profile test run --rm frontend-tests
+docker compose -f docker-compose.yml --profile test run --rm backend-tests && docker compose -f docker-compose.yml --profile test run --rm frontend-tests
 ```
 
 ## Stop Stack
 
 ```bash
-docker compose -f fullstack/docker-compose.yml down
+docker compose -f docker-compose.yml down
 ```
 
-For complete project workflow details, use the main guide in `fullstack/README.md`.
+For complete project workflow details, use the main guide in `repo/README.md`.

@@ -147,9 +147,9 @@ def _build_rows(db: Session, store_ids: list[int], start_date: date, end_date: d
     for metric in metrics:
         revenue = Decimal(metric.revenue_total or 0).quantize(Decimal("0.01"))
         orders = int(metric.successful_orders or 0)
-        refunds = Decimal("0.00")
-        cost = Decimal("0.00")
-        gross_margin = revenue
+        refunds = Decimal(getattr(metric, "refund_total", 0) or 0).quantize(Decimal("0.01"))
+        cost = Decimal(getattr(metric, "cost_total", 0) or 0).quantize(Decimal("0.01"))
+        gross_margin = (revenue - refunds - cost).quantize(Decimal("0.01"))
         rows.append(
             DashboardDataRow(
                 store_id=metric.store_id,

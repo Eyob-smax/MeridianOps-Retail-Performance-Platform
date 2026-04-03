@@ -234,6 +234,17 @@ def post_transfer(db: Session, payload: TransferRequest, current_user: AuthUser)
     for line in payload.lines:
         item = _get_item_by_sku(db, line.sku)
         qty = quantize_qty(line.quantity)
+
+        # Lock ledger rows for this position to serialize concurrent transfers.
+        db.execute(
+            select(InventoryLedger.id)
+            .where(
+                InventoryLedger.item_id == item.id,
+                InventoryLedger.location_id == source.id,
+            )
+            .with_for_update()
+        ).all()
+
         _, _, available = _position_totals(db, item.id, source.id)
         if available < qty:
             raise InventoryError(f"Insufficient available stock for SKU {item.sku}")
@@ -309,6 +320,17 @@ def post_count(db: Session, payload: CountRequest, current_user: AuthUser) -> In
     for line in payload.lines:
         item = _get_item_by_sku(db, line.sku)
         counted = quantize_qty(line.counted_qty)
+
+        # Lock ledger rows for this position to serialize concurrent counts.
+        db.execute(
+            select(InventoryLedger.id)
+            .where(
+                InventoryLedger.item_id == item.id,
+                InventoryLedger.location_id == location.id,
+            )
+            .with_for_update()
+        ).all()
+
         on_hand, _, _ = _position_totals(db, item.id, location.id)
         variance = quantize_qty(counted - on_hand)
 

@@ -20,7 +20,17 @@ def get_wallet_balance(db: Session, member_id: int) -> Decimal | None:
     wallet = db.execute(select(WalletAccount).where(WalletAccount.member_id == member_id)).scalar_one_or_none()
     if not wallet:
         return None
-    return Decimal(wallet.balance)
+    balance = wallet.balance
+    if isinstance(balance, Decimal):
+        return balance
+    # Handle encrypted string balance
+    if field_encryptor.enabled:
+        try:
+            decrypted = field_encryptor.decrypt(str(balance))
+            return Decimal(decrypted) if decrypted else Decimal(str(balance))
+        except (ValueError, Exception):
+            pass
+    return Decimal(str(balance))
 
 
 def to_member_response(db: Session, member: Member) -> MemberResponse:

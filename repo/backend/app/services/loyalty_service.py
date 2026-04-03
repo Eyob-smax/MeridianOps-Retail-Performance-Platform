@@ -38,6 +38,27 @@ def _decrypt_name(value: str) -> str:
     return field_encryptor.decrypt(value) or ""
 
 
+def _encrypt_amount(value: Decimal) -> str:
+    """Encrypt a monetary value for at-rest storage. Returns string representation when encryption is disabled."""
+    str_value = str(value)
+    if not field_encryptor.enabled:
+        return str_value
+    return field_encryptor.encrypt(str_value) or str_value
+
+
+def _decrypt_amount(value: str | Decimal) -> Decimal:
+    """Decrypt a monetary value from storage. Handles both encrypted strings and plain Decimal."""
+    if isinstance(value, Decimal):
+        return value
+    if not field_encryptor.enabled:
+        return Decimal(str(value))
+    try:
+        decrypted = field_encryptor.decrypt(str(value))
+        return Decimal(decrypted) if decrypted else Decimal(str(value))
+    except (ValueError, Exception):
+        return Decimal(str(value))
+
+
 def _get_member_by_code(db: Session, member_code: str, store_id: int | None = None) -> Member | None:
     normalized = member_code.strip().upper()
     stmt = select(Member).where(Member.member_code == normalized)
@@ -200,7 +221,7 @@ def _write_wallet_ledger(
         member_id=member.id,
         entry_type=entry_type.value,
         amount=round_money(amount),
-        balance_after=round_money(wallet.balance),
+        balance_after=round_money(_decrypt_amount(wallet.balance)),
         reason=reason,
         operator_user_id=actor_user_id,
     )
@@ -218,7 +239,9 @@ def credit_wallet(
     member = get_member_by_code_or_raise(db, member_code, store_id=store_id)
     wallet = _get_wallet_for_update(db, member.id)
 
-    wallet.balance = round_money(Decimal(wallet.balance) + payload.amount)
+    current_balance = _decrypt_amount(wallet.balance)
+    new_balance = round_money(current_balance + payload.amount)
+    wallet.balance = new_balance
     entry = _write_wallet_ledger(
         db,
         wallet=wallet,
@@ -251,7 +274,8 @@ def debit_wallet(
     member = get_member_by_code_or_raise(db, member_code, store_id=store_id)
     wallet = _get_wallet_for_update(db, member.id)
 
-    new_balance = round_money(Decimal(wallet.balance) - payload.amount)
+    current_balance = _decrypt_amount(wallet.balance)
+    new_balance = round_money(current_balance - payload.amount)
     if new_balance < Decimal("0.00"):
         raise WalletOperationError("Insufficient wallet balance")
 

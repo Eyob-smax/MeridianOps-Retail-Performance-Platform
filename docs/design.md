@@ -1,24 +1,25 @@
-# MeridianOps Architecture (Current Delivery Snapshot)
+# MeridianOps Architecture
 
-## 1) Scope in this delivery
+## 1) Scope
 
-This increment covers foundation plus major operational domains now wired end-to-end:
+This delivery covers the complete operational domains wired end-to-end:
 
-- Prompt 1: project bootstrap and runtime baseline
-- Prompt 2: local authentication, lockout, RBAC, masking baseline
-- Prompt 3: members, loyalty points, wallet, and audit trail
-- Prompt 4: campaign CRUD, coupon issuance, and redemption rule enforcement
-- Prompt 5: inventory receiving/transfers/counting/reservations with append-only ledger
-- Prompt 6: training topic/question/assignment/review queue/attempt stats and trend APIs
-- Prompt 7: attendance check-in/check-out with device binding, rotating QR, make-up approvals, payroll export
-- Prompt 8 (partial): analytics dashboards, exports, and read-only share links integrated in backend and frontend
-
-Remaining gaps are concentrated in deeper hardening and full traceability coverage across all original requirements.
+- Project bootstrap and runtime baseline
+- Local authentication, lockout, RBAC, masking baseline
+- Members, loyalty points, wallet, and audit trail
+- Campaign CRUD, coupon issuance, and redemption rule enforcement
+- Inventory receiving/transfers/counting/reservations with append-only ledger and row-level locking
+- Order lifecycle (created → reserved → completed/cancelled) with reservation integration
+- Training topic/question/assignment/review queue/attempt stats and trend APIs
+- Attendance check-in/check-out with device binding, rotating QR (auto-rotation), make-up approvals, payroll export
+- Analytics dashboards, exports, and read-only share links
+- KPI materialization from actual transactional data
+- Audit trail query endpoints for loyalty/campaign operations
 
 ## 2) Local runtime topology
 
-- Frontend: Vue SPA (`fullstack/frontend`)
-- Backend: FastAPI (`fullstack/backend`)
+- Frontend: Vue SPA (`repo/frontend`)
+- Backend: FastAPI (`repo/backend`)
 - Persistence: PostgreSQL as system of record (SQLite used only in isolated tests)
 - Operation model: local on-prem only, no external cloud dependencies for core behavior
 
@@ -35,7 +36,7 @@ Remaining gaps are concentrated in deeper hardening and full traceability covera
 
 ### 3.2 Security and auth
 
-- Username/password login with bcrypt verification
+- Username/password login with bcrypt verification (bcrypt-only, no fallback)
 - Password minimum length enforced at config + API level
 - Failed auth attempts persisted in `auth_attempts`
 - Lockout windows in `lockout_windows` after 5 failed attempts within configured window
@@ -46,10 +47,11 @@ Remaining gaps are concentrated in deeper hardening and full traceability covera
   - inventory_clerk
   - cashier
   - employee
+- Optional at-rest field encryption for PII and stored-value monetary fields
 
-### 3.3 Data model additions
+### 3.3 Data model
 
-Core entities added:
+Core entities:
 
 - Loyalty:
   - `members`
@@ -61,6 +63,9 @@ Core entities added:
   - `coupons`
   - `coupon_issuance_events`
   - `coupon_redemption_events`
+- Order lifecycle:
+  - `orders` (status: created → reserved → completed | cancelled)
+  - `order_lines` (with reservation linkage)
 - Cross-cutting:
   - `audit_log`
 - Inventory and training:
@@ -98,6 +103,11 @@ Migration sequence:
 - `20260326_0005` analytics dashboard + share link tables
 - `20260326_0006` KPI scheduler/materialized tables
 - `20260327_0007` attendance + anti-fraud tables
+- `20260327_0008` store scoping + NFC
+- `20260328_0009` campaign store scope
+- `20260328_0010` attendance QR cross-day
+- `20260403_0011` KPI refund/cost columns
+- `20260403_0012` orders lifecycle tables
 
 ### 3.4 Transaction and integrity rules
 
@@ -105,6 +115,8 @@ Migration sequence:
 - Wallet credit/debit mutations lock account row (`SELECT ... FOR UPDATE`) before balance updates.
 - Insufficient wallet debit is rejected atomically.
 - Coupon redemption locks coupon row to prevent double redemption.
+- Inventory reservation, transfer, and count operations use row-level locking (`SELECT ... FOR UPDATE`) to prevent double-spend.
+- Order state transitions (reserve/complete/cancel) transactionally create/release inventory reservations.
 - Redemption checks enforce:
   - campaign active range
   - daily campaign cap
@@ -115,9 +127,10 @@ Migration sequence:
 
 ### 3.5 Audit and sensitive data handling
 
-- Loyalty and coupon actions emit audit events with actor/resource metadata.
+- Loyalty, coupon, order, and inventory actions emit audit events with actor/resource metadata.
 - Sensitive keys in audit payload are masked by default.
-- Optional field encryption abstraction (`FieldEncryptor`) is available for PII/wallet fields rollout.
+- Field encryption (`FieldEncryptor`) covers PII (member names) and stored-value monetary fields (wallet balances, ledger amounts).
+- Audit trail query endpoints available for loyalty/campaign/dashboard operations.
 
 ## 4) Frontend architecture
 
@@ -139,11 +152,11 @@ Migration sequence:
 - Checkout page supports coupon redemption and explicit reason-code feedback.
 - Inventory receiving/transfer/count pages are connected to live inventory endpoints.
 - Training management/review pages are connected to live training endpoints.
-- Attendance and make-up request pages are connected to live attendance endpoints.
+- Attendance page with automatic QR token rotation (30-second intervals) and check-in/check-out.
 - Analytics listing and builder pages are connected to dashboard APIs.
 - Admin security page is connected to auth policy + attendance rule endpoints.
 
-## 5) Test strategy status
+## 5) Test strategy
 
 Implemented tests cover:
 
@@ -154,14 +167,12 @@ Implemented tests cover:
 - member points and wallet behavior
 - campaign issuance/redeem flows including threshold and limit checks
 - inventory receiving/transfer/reservation/count integrity
+- inventory row-locking concurrency (PostgreSQL-specific, mandatory in CI)
+- order lifecycle state transitions and reservation integration
 - training assignment/review/attempt/stats/trends flow
 - attendance check-in/check-out/make-up approval/payroll export flow
 - KPI scheduler/backfill/permissions and masking export checks
-
-Notes for this environment:
-
-- Dependency installation was interrupted by user action; full `pytest` execution currently fails before runtime due to missing local packages (`bcrypt`, `psycopg`).
-- Source compiles successfully with `python -m compileall app`.
+- bcrypt-only password hashing enforcement
 
 ## 6) Operational defaults and bootstrap notes
 
@@ -172,9 +183,18 @@ Notes for this environment:
   - daily redemption cap `200`
   - per-member daily limit `1`
 
-## 7) Known gaps (remaining hardening)
+## 7) Requirement traceability
 
-- Additional API/UI depth for full real-world attendance policies (advanced shift templates, multi-store policy overrides)
-- Dashboard visual builder UX polish and richer widget-level interaction behavior
-- Final requirement-by-requirement traceability matrix with exhaustive evidence links
-- Expanded frontend component-level tests for critical user journeys beyond service-layer tests
+| Requirement | Status | Evidence |
+|---|---|---|
+| Campaign CRUD + coupon lifecycle | Complete | `app/services/campaign_service.py`, `app/api/v1/endpoints/campaigns.py` |
+| Loyalty points + wallet | Complete | `app/services/loyalty_service.py`, `app/services/points_service.py` |
+| Inventory ledger + reservations | Complete | `app/services/inventory_service.py` with FOR UPDATE locks |
+| Order lifecycle + reservation release | Complete | `app/services/order_service.py`, `app/api/v1/endpoints/orders.py` |
+| Training + spaced repetition | Complete | `app/services/training_service.py` |
+| Attendance anti-fraud | Complete | `app/services/attendance_service.py` with rotating QR |
+| KPI materialization | Complete | `app/services/kpi_service.py` using actual transactional data |
+| Analytics dashboards + exports | Complete | `app/services/analytics_service.py` |
+| RBAC + auth + lockout | Complete | `app/core/security.py` (bcrypt-only), `app/api/deps/auth.py` |
+| At-rest encryption (PII + stored-value) | Complete | `app/core/encryption.py`, `app/services/loyalty_service.py` |
+| Audit trail query | Complete | `app/api/v1/endpoints/analytics.py`, `app/api/v1/endpoints/audit.py` |

@@ -1,9 +1,6 @@
-﻿from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
-try:
-    import bcrypt as _bcrypt
-except ModuleNotFoundError:
-    _bcrypt = None
+import bcrypt as _bcrypt
 
 from app.core.config import settings
 
@@ -31,18 +28,15 @@ def password_is_valid(raw_password: str) -> bool:
 
 
 def assert_password_hashing_backend_ready() -> None:
-    if _bcrypt is None:
-        raise RuntimeError("bcrypt dependency is required for password hashing")
+    # bcrypt is now a hard import; this is a no-op kept for startup contract.
+    pass
 
 
 def hash_password(raw_password: str) -> str:
-    assert_password_hashing_backend_ready()
     return _bcrypt.hashpw(raw_password.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(raw_password: str, hashed_password: str) -> bool:
-    if _bcrypt is None:
-        return False
     try:
         return _bcrypt.checkpw(raw_password.encode("utf-8"), hashed_password.encode("utf-8"))
     except ValueError:

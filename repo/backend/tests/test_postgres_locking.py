@@ -13,9 +13,9 @@ from app.db.base import Base
 from app.db.models import Campaign, CouponRedemptionEvent, InventoryLedger, InventoryLocation, InventoryReservation
 from app.schemas.auth import AuthUser
 from app.schemas.campaigns import CouponRedeemRequest
-from app.schemas.inventory import ReservationCreateRequest
+from app.schemas.inventory import ReservationCreateRequest, TransferRequest, InventoryDocumentLineInput
 from app.services.campaign_service import redeem_coupon
-from app.services.inventory_service import create_reservation
+from app.services.inventory_service import create_reservation, post_transfer, InventoryError
 
 
 def _pg_url() -> str | None:
@@ -186,3 +186,83 @@ def test_postgres_inventory_reservation_prevents_double_spend(pg_session_factory
         reservations = db.execute(select(InventoryReservation)).scalars().all()
         assert len(reservations) == 1
         assert reservations[0].reserved_qty == Decimal("4.000")
+
+
+@pytest.fixture
+def seeded_transfer_inventory(pg_session_factory):
+    """Seed two locations with stock for transfer concurrency tests."""
+    with pg_session_factory() as db:
+        from app.db.models import InventoryItem
+
+        item = InventoryItem(
+            sku="SKU-PG-XFER",
+            name="Transfer Lock Item",
+            unit="ea",
+            batch_tracking_enabled=False,
+            expiry_tracking_enabled=False,
+        )
+        source = InventoryLocation(code="SRC-PG", name="Source PG")
+        target = InventoryLocation(code="TGT-PG", name="Target PG")
+        db.add(item)
+        db.add(source)
+        db.add(target)
+        db.flush()
+
+        # Seed 5 units at source
+        db.add(
+            InventoryLedger(
+                item_id=item.id,
+                location_id=source.id,
+                entry_type="seed",
+                quantity_delta=Decimal("5.000"),
+                reservation_delta=Decimal("0.000"),
+            )
+        )
+        db.commit()
+        return item.sku, source.code, target.code
+
+
+def test_postgres_transfer_prevents_double_spend(pg_session_factory, seeded_transfer_inventory):
+    """Two concurrent transfers of 4 units from same source (only 5 available) — only one should succeed."""
+    sku, source_code, target_code = seeded_transfer_inventory
+    # Use a seeded user so FK constraints are satisfied on the PG database.
+    from app.db.models import User
+    from app.core.security import hash_password
+    with pg_session_factory() as db:
+        existing = db.execute(select(User).where(User.username == "pg_xfer_user")).scalar_one_or_none()
+        if not existing:
+            u = User(username="pg_xfer_user", display_name="PG Xfer", password_hash=hash_password("Dummy12345678"))
+            db.add(u)
+            db.commit()
+            user_id = u.id
+        else:
+            user_id = existing.id
+    actor = AuthUser(id=user_id, store_id=None, username="pg_xfer_user", display_name="PG Xfer", roles=["inventory_clerk"])
+
+    def transfer():
+        with pg_session_factory() as db:
+            try:
+                post_transfer(
+                    db,
+                    TransferRequest(
+                        source_location_code=source_code,
+                        target_location_code=target_code,
+                        lines=[InventoryDocumentLineInput(sku=sku, quantity=Decimal("4.000"))],
+                    ),
+                    actor,
+                )
+                db.commit()
+                return "success"
+            except (InventoryError, Exception) as exc:
+                db.rollback()
+                return str(exc)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(transfer)
+        second = pool.submit(transfer)
+
+    outcomes = [first.result(), second.result()]
+    success_count = sum(1 for o in outcomes if o == "success")
+    fail_count = sum(1 for o in outcomes if "Insufficient" in o)
+    assert success_count == 1, f"Expected exactly 1 success, got outcomes: {outcomes}"
+    assert fail_count == 1, f"Expected exactly 1 insufficient-stock failure, got outcomes: {outcomes}"
