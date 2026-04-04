@@ -1,0 +1,96 @@
+{
+  "session_id": "019d4b00-a600-7006-b006-000000000006",
+  "timestamp": "2026-04-04T00:30:00.000Z",
+  "summary": "Fixed all 5 static audit findings: cross-store audit log isolation (F1), true stored-value at-rest encryption with VARCHAR columns (F2), frontend audit trail UI (F3), missing run_app.sh (F4), and login credential disclosure removal (F5).",
+  "fixes": [
+    {
+      "area": "F1 - Cross-store audit log isolation (HIGH)",
+      "details": [
+        "Added store_id column to audit_log table via migration 20260404_0013.",
+        "Updated audit_event() to accept and persist store_id on all audit writes.",
+        "Propagated store_id through all 28 audit_event() calls across 8 service files (loyalty, inventory, order, campaign, training, attendance, kpi, analytics).",
+        "Rewrote /audit/* endpoints to enforce server-side store-scope filtering: store_manager users only see events for their own store or unscoped events.",
+        "Added cross-store audit isolation test: manager102 cannot see store 101 events."
+      ],
+      "files": [
+        "repo/backend/app/db/models/audit.py",
+        "repo/backend/app/services/audit_service.py",
+        "repo/backend/app/api/v1/endpoints/audit.py",
+        "repo/backend/app/services/loyalty_service.py",
+        "repo/backend/app/services/inventory_service.py",
+        "repo/backend/app/services/order_service.py",
+        "repo/backend/app/services/campaign_service.py",
+        "repo/backend/app/services/training_service.py",
+        "repo/backend/app/services/attendance_service.py",
+        "repo/backend/alembic/versions/20260404_0013_audit_store_scope.py"
+      ]
+    },
+    {
+      "area": "F2 - Stored-value at-rest encryption (HIGH)",
+      "details": [
+        "Converted wallet_accounts.balance, wallet_ledger.amount, wallet_ledger.balance_after, and points_ledger.pre_tax_amount from Numeric to VARCHAR(255) via migration 20260404_0014.",
+        "All wallet writes now go through _encrypt_amount() producing Fernet ciphertext when FIELD_ENCRYPTION_KEY is configured.",
+        "All wallet reads transparently decrypt via _decrypt_stored_amount().",
+        "Updated seed_service.py to use string values for wallet/points columns.",
+        "Added wallet encryption roundtrip test and end-to-end wallet credit/debit persistence tests."
+      ],
+      "files": [
+        "repo/backend/app/db/models/loyalty.py",
+        "repo/backend/app/services/loyalty_service.py",
+        "repo/backend/app/services/member_view_service.py",
+        "repo/backend/app/api/v1/endpoints/members.py",
+        "repo/backend/app/services/seed_service.py",
+        "repo/backend/alembic/versions/20260404_0014_wallet_encrypted_columns.py"
+      ]
+    },
+    {
+      "area": "F3 - Frontend audit trail UI (MEDIUM)",
+      "details": [
+        "Added audit.ts API service client with typed methods for all audit endpoints.",
+        "Added AuditTrailView.vue with category filter (all/member/campaign/order), action search, and data table.",
+        "Added /app/audit route with administrator + store_manager role guard.",
+        "Added 'Audit Trail' navigation entry."
+      ],
+      "files": [
+        "repo/frontend/src/services/audit.ts",
+        "repo/frontend/src/views/app/AuditTrailView.vue",
+        "repo/frontend/src/router/index.ts",
+        "repo/frontend/src/app/navigation.ts"
+      ]
+    },
+    {
+      "area": "F4 - Missing run_app.sh (MEDIUM)",
+      "details": [
+        "Created run_app.sh startup helper script matching README reference.",
+        "Runs docker compose up --build -d and prints service URLs."
+      ],
+      "files": [
+        "repo/run_app.sh"
+      ]
+    },
+    {
+      "area": "F5 - Login credential disclosure (LOW)",
+      "details": [
+        "Removed default password hint text from LoginView.vue.",
+        "Removed prefilled username/password defaults from form state.",
+        "Removed seed user hint paragraph."
+      ],
+      "files": [
+        "repo/frontend/src/views/auth/LoginView.vue"
+      ]
+    }
+  ],
+  "tests_added": [
+    "repo/backend/tests/test_security_hardening.py::test_manager_audit_events_scoped_to_own_store",
+    "repo/backend/tests/test_security_hardening.py::test_admin_sees_all_audit_events",
+    "repo/backend/tests/test_security_hardening.py::test_wallet_encryption_roundtrip_with_encryptor",
+    "repo/backend/tests/test_security_hardening.py::test_wallet_credit_debit_flow_stores_correctly",
+    "repo/backend/tests/test_security_hardening.py::test_wallet_insufficient_debit_rejected"
+  ],
+  "validation": {
+    "backend_tests": "docker compose --profile test run --rm backend-tests => 84 passed",
+    "frontend_tests": "docker compose --profile test run --rm frontend-tests => 16 passed (6 test files)",
+    "migrations": "14 migrations applied successfully (0001-0014)",
+    "app_health": "GET /api/v1/health => ok, database => ok"
+  }
+}
